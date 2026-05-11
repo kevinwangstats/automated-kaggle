@@ -18,10 +18,28 @@ This file contains knowledge and skills specific to how this project operates. A
 - The `agent_loop.py` explicitly relies on this fact: `higher_is_better` is generally treated as `True` for raw sklearn scores.
 
 ## 3. Submission Generation
-- If the `--test_path` argument is provided to `main.py`, the `baseline_engine.py` appends a "submission generation" block to the bottom of the generated `train_model.py`.
-- This block fits the final model on `X` and `y` (the entire train set), reads the test set, matches categorical encoding, drops missing columns, and generates a `submission.csv`.
+- If `test_path` is set in `config.yaml`, the `baseline_engine.py` appends a "submission generation" block to the bottom of the generated `train_model.py`.
+- This block fits the final model on `X` and `y` (the entire train set), reads the test set, matches categorical encoding, fills missing columns with 0, and generates a `submission.csv`.
 - The LLM is instructed to maintain this submission logic if it rewrites the script.
 
-## 4. Environment Variables
+## 4. Configuration
+- All pipeline inputs (`dataset_path`, `target_col`, `test_path`, `metric`, `iterations`, `timeout`) are defined in `config.yaml`.
+- `main.py` accepts a single `--config` argument pointing to a YAML file (default: `config.yaml`).
+- The `-y` flag skips per-LLM-call confirmation prompts.
+
+## 5. Baseline Metrics Reporting
+- For binary classification tasks, `baseline_engine.py` runs `cross_val_predict` in addition to `cross_val_score` for all three models (XGBoost, LightGBM, CatBoost).
+- It computes a Confusion Matrix and derives Accuracy, F1 Score, Sensitivity, and Specificity.
+- These reports are printed directly to standard output *outside* the `suppress_stdout_stderr()` block, ensuring they appear in both local and GitHub Actions logs.
+- LightGBM models must always be initialized with `verbose=-1` to suppress C++ backend warnings at the source.
+
+## 6. CI/CD Pipeline
+- `.github/workflows/titanic_ci.yml` is a GitHub Actions workflow that triggers on every push/PR to `main`.
+- It authenticates to Kaggle using a `KAGGLE_API_TOKEN` secret (stored in GitHub > Settings > Secrets), writes it to `~/.kaggle/kaggle.json`, and downloads the Titanic competition dataset.
+- It then runs `main.py` with `iterations: 0` to test the EDA and Baseline engines without triggering any LLM calls.
+- This makes the Titanic competition a permanent CI regression test for the template.
+
+## 7. Environment Variables
 - `AUTOML_MODEL`: Determines the Litellm routing model (e.g. `gemini/gemini-1.5-pro`).
 - Standard API keys (e.g., `GEMINI_API_KEY`, `OPENAI_API_KEY`) must be present in the shell environment running the orchestrator.
+- `KAGGLE_API_TOKEN`: Required for the GitHub Actions CI/CD workflow to authenticate to Kaggle.

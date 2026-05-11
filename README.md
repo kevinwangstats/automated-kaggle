@@ -62,3 +62,10 @@ python main.py --config custom_config.yaml -y
 - **`CHANGELOG.md`**: Stores a human-readable summary of every successful iteration.
 - **`history.json`**: Stores granular metrics, hyperparameters, and git commits for every attempt.
 - The pipeline uses a custom token-efficient logger to minimize noise during execution.
+
+## CI/CD
+
+This template includes a GitHub Actions workflow (`.github/workflows/titanic_ci.yml`) that automatically validates the pipeline on every push to `main` using the classic [Titanic dataset](https://www.kaggle.com/competitions/titanic/overview). It runs the EDA and Baseline engines with `iterations: 0` to skip LLM calls entirely, ensuring the core pipeline is always functional at zero API cost.
+
+**Required GitHub Repository Secret:**
+- `KAGGLE_API_TOKEN`: Your Kaggle access token (generate at kaggle.com > Account Settings > API).
