@@ -19,12 +19,40 @@ The system consists of the following core components:
    pip install -r requirements.txt
    ```
 
-2. Set your preferred LLM API keys in your environment variables. For example:
+2. **Configure your LLM.** This pipeline uses [`litellm`](https://docs.litellm.ai/docs/providers) to support any LLM provider. Model selection follows this priority order:
+   1. `model` field in `config.yaml` (highest priority)
+   2. `AUTOML_MODEL` environment variable
+   3. Default: `gemini/gemini-2.0-flash`
 
+   **Gemini (default):**
+   ```bash
+   export GEMINI_API_KEY="AIza..."
+   # config.yaml: model: gemini/gemini-2.0-flash
+   ```
+
+   **OpenAI / ChatGPT:**
    ```bash
    export OPENAI_API_KEY="sk-..."
-   export GEMINI_API_KEY="AIza..."
+   # config.yaml: model: openai/gpt-4o
    ```
+
+   **Anthropic:**
+   ```bash
+   export ANTHROPIC_API_KEY="sk-ant-..."
+   # config.yaml: model: anthropic/claude-3-5-sonnet-20241022
+   ```
+
+   **Ollama (local, no API key required):**
+   ```bash
+   # 1. Install Ollama: https://ollama.com
+   # 2. Pull a model:
+   ollama pull llama3.2
+   # 3. Set in config.yaml:
+   #    model: ollama/llama3.2
+   #    ollama_base_url: http://localhost:11434  (optional, this is the default)
+   ```
+
+   See the full list of supported providers at [docs.litellm.ai/docs/providers](https://docs.litellm.ai/docs/providers).
 
 ## Usage
 

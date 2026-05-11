@@ -49,7 +49,9 @@ def run_agent_loop(
     task: str,
     max_iterations: int = 5,
     skip_confirmation: bool = False,
-    timeout: int = 600
+    timeout: int = 600,
+    model: str = None,
+    ollama_base_url: str = None
 ):
     log_stage("Starting Agentic Loop")
     current_best_score = base_score
@@ -106,13 +108,21 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. D
                 
         # Call LLM
         try:
-            # We use a default generic model, users should set litellm env vars
-            model_name = os.environ.get("AUTOML_MODEL", "gemini/gemini-1.5-pro")
-            response = completion(
-                model=model_name,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.4
-            )
+            # Priority: config.yaml 'model' > AUTOML_MODEL env var > default
+            model_name = model or os.environ.get("AUTOML_MODEL", "gemini/gemini-2.0-flash")
+            log_stage(f"Calling LLM: {model_name}")
+            
+            completion_kwargs = {
+                "model": model_name,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.4
+            }
+            # Ollama requires an api_base pointing to the local server
+            if model_name.startswith("ollama"):
+                base = ollama_base_url or os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+                completion_kwargs["api_base"] = base
+            
+            response = completion(**completion_kwargs)
             llm_output = response.choices[0].message.content
         except Exception as e:
             log_error("LLM API Call failed", e)

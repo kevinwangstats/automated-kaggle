@@ -8,6 +8,22 @@ dataset_path: "data/train.csv"
 # The exact name of the target column you want to predict (required)
 target_col: "target"
 
+# LLM model to use for the agentic loop (optional)
+# Overrides the AUTOML_MODEL environment variable if set.
+# Uses litellm routing format: "provider/model-name"
+# Default: gemini/gemini-2.0-flash
+# Examples:
+#   Gemini:     gemini/gemini-2.0-flash
+#   OpenAI:     openai/gpt-4o
+#   Anthropic:  anthropic/claude-3-5-sonnet-20241022
+#   Ollama:     ollama/llama3.2   (requires Ollama running locally)
+model: ollama/qwen3.5:2b
+
+# Ollama base URL (optional, only needed if using an ollama/* model)
+# Default: http://localhost:11434
+# Change this if Ollama is running on a different host or port.
+ollama_base_url: ~
+
 # The path to the testing dataset CSV file (optional)
 # If provided, the pipeline will automatically generate a submission.csv
 # using the final model trained on the full train dataset.

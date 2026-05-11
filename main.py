@@ -22,6 +22,8 @@ def main():
         metric = config.get('metric')
         iterations = config.get('iterations', 5)
         timeout = config.get('timeout', 600)
+        model = config.get('model', None)
+        ollama_base_url = config.get('ollama_base_url', None)
         
         if not dataset_path or not target_col:
             raise ValueError("Configuration file must contain 'dataset_path' and 'target_col'")
@@ -51,7 +53,9 @@ def main():
             task=task,
             max_iterations=iterations,
             skip_confirmation=args.yes,
-            timeout=timeout
+            timeout=timeout,
+            model=model,
+            ollama_base_url=ollama_base_url
         )
         
     except Exception as e:
