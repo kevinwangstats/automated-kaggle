@@ -1,0 +1,28 @@
+# ---------------------------------------------------------
+# Agentic AutoML Pipeline Configuration
+# ---------------------------------------------------------
+
+# The path to the training dataset CSV file (required)
+dataset_path: "data/train.csv"
+
+# The exact name of the target column you want to predict (required)
+target_col: "target"
+
+# The path to the testing dataset CSV file (optional)
+# If provided, the pipeline will automatically generate a submission.csv
+# using the final model trained on the full train dataset.
+test_path: "data/test.csv"
+
+# Custom evaluation metric for Cross Validation (optional)
+# If left blank (null or ~), it defaults to:
+# - 'roc_auc' for classification tasks
+# - 'neg_mean_squared_error' for regression tasks
+# Example: "log_loss", "f1", "neg_mean_absolute_error"
+metric: ~
+
+# The number of iterations the Agentic LLM should run to improve the model
+iterations: 5
+
+# The maximum execution time (in seconds) allowed for a single generated model script
+# This prevents the LLM from accidentally writing infinite loops or exhaustive grid searches.
+timeout: 600

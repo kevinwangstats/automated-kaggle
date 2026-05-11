@@ -1,4 +1,5 @@
 import argparse
+import yaml
 from eda_engine import perform_eda
 from baseline_engine import evaluate_baselines
 from agent_loop import run_agent_loop
@@ -7,27 +8,35 @@ from logger import log_stage, log_error
 
 def main():
     parser = argparse.ArgumentParser(description="Agentic AutoML Pipeline")
-    parser.add_argument("--dataset_path", type=str, required=True, help="Path to the Kaggle CSV dataset")
-    parser.add_argument("--target_col", type=str, required=True, help="Target column for prediction")
-    parser.add_argument("--test_path", type=str, default=None, help="Optional path to test.csv for submission generation")
-    parser.add_argument("--metric", type=str, default=None, help="Optional custom sklearn metric name (e.g. log_loss, f1)")
-    parser.add_argument("--timeout", type=int, default=600, help="Timeout in seconds for agent-generated script execution")
+    parser.add_argument("--config", type=str, default="config.yaml", help="Path to YAML configuration file")
     parser.add_argument("-y", "--yes", action="store_true", help="Skip user confirmation before LLM calls")
-    parser.add_argument("--iterations", type=int, default=5, help="Number of agent iterations")
     args = parser.parse_args()
 
     try:
+        with open(args.config, 'r') as f:
+            config = yaml.safe_load(f)
+            
+        dataset_path = config.get('dataset_path')
+        target_col = config.get('target_col')
+        test_path = config.get('test_path')
+        metric = config.get('metric')
+        iterations = config.get('iterations', 5)
+        timeout = config.get('timeout', 600)
+        
+        if not dataset_path or not target_col:
+            raise ValueError("Configuration file must contain 'dataset_path' and 'target_col'")
+
         git_mgr = GitManager()
 
         # Phase 1: EDA
-        eda_path = perform_eda(args.dataset_path)
+        eda_path = perform_eda(dataset_path)
 
         # Phase 2: Baseline
         base_score, script_path, task = evaluate_baselines(
-            dataset_path=args.dataset_path, 
-            target_col=args.target_col,
-            test_path=args.test_path,
-            custom_metric=args.metric
+            dataset_path=dataset_path, 
+            target_col=target_col,
+            test_path=test_path,
+            custom_metric=metric
         )
         
         # Initial commit to secure baseline state
@@ -35,14 +44,14 @@ def main():
 
         # Phase 3: Agentic Loop
         run_agent_loop(
-            dataset_path=args.dataset_path,
-            target_col=args.target_col,
+            dataset_path=dataset_path,
+            target_col=target_col,
             base_score=base_score,
             git_mgr=git_mgr,
             task=task,
-            max_iterations=args.iterations,
+            max_iterations=iterations,
             skip_confirmation=args.yes,
-            timeout=args.timeout
+            timeout=timeout
         )
         
     except Exception as e:

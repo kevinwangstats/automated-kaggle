@@ -28,29 +28,33 @@ The system consists of the following core components:
 
 ## Usage
 
-To kick off the pipeline, run the `main.py` script and provide the path to your Kaggle `train.csv` dataset:
+This template now uses a YAML configuration file as the single source of truth for your pipeline inputs, providing a cleaner level of abstraction.
+
+1. Open `config.yaml` and configure your paths and metrics:
+```yaml
+dataset_path: "data/train.csv"
+target_col: "target"
+test_path: "data/test.csv"
+metric: "log_loss"
+iterations: 5
+timeout: 600
+```
+
+2. To kick off the pipeline, simply run the orchestrator:
 
 ```bash
-python main.py --dataset_path path/to/train.csv --target_col target
+python main.py
 ```
 
 ### Advanced Usage
 
-You can customize the evaluation metric, provide a test dataset for automatic `submission.csv` generation, and enforce time limits on LLM-generated code:
+You can override the default config file path or skip the manual user confirmation prompt before each LLM API call:
 
 ```bash
-python main.py \
-    --dataset_path path/to/train.csv \
-    --target_col target \
-    --test_path path/to/test.csv \
-    --metric log_loss \
-    --timeout 600 \
-    -y
+python main.py --config custom_config.yaml -y
 ```
 
-- `--test_path`: Path to `test.csv`. If provided, the generated scripts will automatically train on the full training set and output predictions for Kaggle submission.
-- `--metric`: Override the default metric (defaults are `roc_auc` for classification and `neg_mean_squared_error` for regression).
-- `--timeout`: Maximum execution time in seconds for a single LLM-generated script run (default: 600).
+- `--config`: Path to a custom YAML configuration file (default: `config.yaml`).
 - `-y`: Skip the manual user confirmation prompt before each LLM API call.
 
 ## Logs and Tracking
