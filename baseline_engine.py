@@ -149,7 +149,7 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
                 
             try:
                 from lightgbm import LGBMRegressor, LGBMClassifier
-                models_to_eval['lgb'] = LGBMClassifier(random_state=42) if task == 'classification' else LGBMRegressor(random_state=42)
+                models_to_eval['lgb'] = LGBMClassifier(random_state=42, verbose=-1) if task == 'classification' else LGBMRegressor(random_state=42, verbose=-1)
             except Exception: pass
                 
             try:
