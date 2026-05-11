@@ -1,0 +1,20 @@
+# Agentic AutoML Tabular Pipeline Rules
+
+You are working in a Python-based template repository designed for autonomous, agentic modeling on Kaggle Tabular data challenges. This project uses `litellm` combined with pure Python orchestration and Git-based strict code provenance.
+
+## 1. Architectural Constraints
+- **Lightweight Frameworks Only**: Do NOT introduce heavy multi-agent frameworks like LangChain, LangGraph, AutoGen, or CrewAI. This repository relies strictly on pure Python orchestration (`main.py`, `agent_loop.py`) interacting with `litellm`.
+- **Ephemeral Files**: The file `train_model.py` is an ephemeral file generated and overwritten continuously by the pipeline. Do not manually edit it unless you are actively debugging a syntax error for the user.
+- **Git Provenance**: The pipeline handles Git operations. Successful runs are merged to `main`, failed runs on branches like `experiment/iter_X` are discarded. Do not bypass the git_manager.
+
+## 2. Formatting & Tracking Strict Rules
+- **`CHANGELOG.md`**: Must only contain successful iterations. It must follow a markdown bullet format: `- **Iter <N>**: Score <score> (Commit: <id>)`. Do not bloat this file with verbose logging.
+- **`history.json`**: Tracks all iterations (both successful and failed). It strictly follows an array of objects with schema: `{"iteration": int, "commit": str, "score": float, "improved": bool, "prompt": str, "response": str, "error": str}`. If editing logic related to this, you must preserve these keys.
+
+## 3. Logging Etiquette
+- **DO NOT use standard `print()`** statements for debugging standard execution paths. Use the custom `logger.py` (`log_stage`, `log_error`, `log_metric`).
+- Exception: The `FINAL_CV_SCORE` must be output using exactly `print(f"FINAL_CV_SCORE: {final_score:.4f}")` as the orchestrator parses standard output using regex to capture this exact string.
+
+## 4. Modeling Etiquette
+- Kaggle test datasets do not contain target labels. When the pipeline generates a `submission.csv` via the `--test_path` argument, ensure that the preprocessing strictly matches the training data preprocessing.
+- Baseline models implemented in `baseline_engine.py` evaluate standard tabular heavyweights: XGBoost, LightGBM, and CatBoost. When adding features, prioritize standard scikit-learn compatible wrappers.
