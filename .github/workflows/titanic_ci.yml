@@ -31,8 +31,8 @@ jobs:
         echo "{\"username\":\"github-actions\",\"key\":\"$KAGGLE_API_TOKEN\"}" > ~/.kaggle/kaggle.json
         chmod 600 ~/.kaggle/kaggle.json
         mkdir -p data/titanic
-        kaggle competitions download -c titanic -p data/titanic
-        unzip data/titanic/titanic.zip -d data/titanic/
+        kaggle competitions download -c titanic -p data/titanic --force
+        unzip -o data/titanic/titanic.zip -d data/titanic/
 
     - name: Run Baseline Engine
       run: |
