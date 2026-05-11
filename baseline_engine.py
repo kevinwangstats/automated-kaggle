@@ -138,32 +138,58 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
         cv = KFold(n_splits=3, shuffle=True, random_state=42) # 3 splits for speed in baseline
         
         results = {}
+        metric_reports = {}
+        models_to_eval = {}
         
-        # We use suppress_stdout_stderr to prevent C-libraries from spamming console
         with suppress_stdout_stderr():
             try:
                 from xgboost import XGBRegressor, XGBClassifier
-                model = XGBClassifier(random_state=42) if task == 'classification' else XGBRegressor(random_state=42)
-                scores = cross_val_score(model, X, y, cv=cv, scoring=scoring, n_jobs=-1)
-                results['xgb'] = np.mean(scores)
-            except Exception as e:
-                pass
+                models_to_eval['xgb'] = XGBClassifier(random_state=42) if task == 'classification' else XGBRegressor(random_state=42)
+            except Exception: pass
                 
             try:
                 from lightgbm import LGBMRegressor, LGBMClassifier
-                model = LGBMClassifier(random_state=42) if task == 'classification' else LGBMRegressor(random_state=42)
-                scores = cross_val_score(model, X, y, cv=cv, scoring=scoring, n_jobs=-1)
-                results['lgb'] = np.mean(scores)
-            except Exception as e:
-                pass
+                models_to_eval['lgb'] = LGBMClassifier(random_state=42) if task == 'classification' else LGBMRegressor(random_state=42)
+            except Exception: pass
                 
             try:
                 from catboost import CatBoostRegressor, CatBoostClassifier
-                model = CatBoostClassifier(random_state=42, verbose=0) if task == 'classification' else CatBoostRegressor(random_state=42, verbose=0)
-                scores = cross_val_score(model, X, y, cv=cv, scoring=scoring, n_jobs=-1)
-                results['cat'] = np.mean(scores)
-            except Exception as e:
-                pass
+                models_to_eval['cat'] = CatBoostClassifier(random_state=42, verbose=0) if task == 'classification' else CatBoostRegressor(random_state=42, verbose=0)
+            except Exception: pass
+
+            for m_name, model in models_to_eval.items():
+                try:
+                    scores = cross_val_score(model, X, y, cv=cv, scoring=scoring, n_jobs=-1)
+                    results[m_name] = np.mean(scores)
+                    
+                    if task == 'classification' and len(np.unique(y)) == 2:
+                        from sklearn.model_selection import cross_val_predict
+                        from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
+                        
+                        preds = cross_val_predict(model, X, y, cv=cv, n_jobs=-1)
+                        acc = accuracy_score(y, preds)
+                        f1 = f1_score(y, preds)
+                        tn, fp, fn, tp = confusion_matrix(y, preds).ravel()
+                        sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0
+                        specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+                        
+                        report = f"--- {m_name.upper()} ---\n"
+                        report += f"  Pos Cases: {tp+fn} | Neg Cases: {tn+fp}\n"
+                        report += f"  Accuracy:    {acc:.4f}\n"
+                        report += f"  F1 Score:    {f1:.4f}\n"
+                        report += f"  Sensitivity: {sensitivity:.4f}\n"
+                        report += f"  Specificity: {specificity:.4f}\n"
+                        metric_reports[m_name] = report
+                except Exception as e:
+                    pass
+        
+        # Print detailed reports outside the suppression block
+        if metric_reports:
+            print("\n" + "="*30)
+            print("DETAILED BASELINE METRICS (Binary Classification)")
+            for r in metric_reports.values():
+                print(r)
+            print("="*30 + "\n")
                 
         if not results:
             raise ValueError("All baseline models failed to evaluate.")
