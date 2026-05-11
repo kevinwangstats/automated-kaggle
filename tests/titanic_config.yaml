@@ -1,0 +1,26 @@
+# ---------------------------------------------------------
+# CI/CD Test Configuration: Kaggle Titanic Dataset
+# https://www.kaggle.com/competitions/titanic/overview
+# ---------------------------------------------------------
+# This config is used by the GitHub Actions CI pipeline
+# (.github/workflows/titanic_ci.yml) to validate the
+# baseline engine on every push to main.
+#
+# To run this test locally:
+#   1. Download Titanic data: kaggle competitions download -c titanic
+#   2. Unzip into data/titanic/
+#   3. Run: python main.py --config tests/titanic_config.yaml -y
+# ---------------------------------------------------------
+
+dataset_path: "data/titanic/train.csv"
+target_col: "Survived"
+test_path: "data/titanic/test.csv"
+
+# roc_auc is standard for binary classification
+metric: "roc_auc"
+
+# Set to 0 to skip the LLM agent loop (baseline-only run)
+iterations: 0
+
+# Generous timeout for CI runners
+timeout: 600

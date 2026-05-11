@@ -67,5 +67,11 @@ python main.py --config custom_config.yaml -y
 
 This template includes a GitHub Actions workflow (`.github/workflows/titanic_ci.yml`) that automatically validates the pipeline on every push to `main` using the classic [Titanic dataset](https://www.kaggle.com/competitions/titanic/overview). It runs the EDA and Baseline engines with `iterations: 0` to skip LLM calls entirely, ensuring the core pipeline is always functional at zero API cost.
 
+The test configuration lives at `tests/titanic_config.yaml` and can also be run **locally**:
+```bash
+kaggle competitions download -c titanic -p data/titanic && unzip data/titanic/titanic.zip -d data/titanic/
+python main.py --config tests/titanic_config.yaml -y
+```
+
 **Required GitHub Repository Secret:**
 - `KAGGLE_API_TOKEN`: Your Kaggle access token (generate at kaggle.com > Account Settings > API).

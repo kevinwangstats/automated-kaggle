@@ -34,17 +34,6 @@ jobs:
         kaggle competitions download -c titanic -p data/titanic
         unzip data/titanic/titanic.zip -d data/titanic/
 
-    - name: Generate Titanic Config
-      run: |
-        cat << 'EOF' > titanic_config.yaml
-        dataset_path: "data/titanic/train.csv"
-        target_col: "Survived"
-        test_path: "data/titanic/test.csv"
-        metric: "roc_auc"
-        iterations: 0
-        timeout: 600
-        EOF
-
     - name: Run Baseline Engine
       run: |
-        python main.py --config titanic_config.yaml -y
+        python main.py --config tests/titanic_config.yaml -y
