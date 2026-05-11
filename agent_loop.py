@@ -47,11 +47,12 @@ def run_agent_loop(
     base_score: float,
     git_mgr: GitManager,
     task: str,
+    dataset_branch: str,
     max_iterations: int = 5,
     skip_confirmation: bool = False,
     timeout: int = 600,
     model: str = None,
-    ollama_base_url: str = None
+    ollama_base_url: str = None,
 ):
     log_stage("Starting Agentic Loop")
     current_best_score = base_score
@@ -131,7 +132,9 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. D
         new_code = extract_python_code(llm_output)
         
         # Git Branch creation
-        branch_name = git_mgr.create_experiment_branch(iteration=len(history)+1)
+        branch_name = git_mgr.create_experiment_branch(
+            iteration=len(history) + 1, base_branch=dataset_branch
+        )
         
         # Write new code
         with open("train_model.py", "w") as f:
@@ -152,7 +155,9 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. D
                 
                 # Commit and merge
                 commit_id = git_mgr.commit_all(f"[Iter {len(history)+1} | CV Score: {new_score:.4f}] Successful agent iteration")
-                git_mgr.merge_to_main(branch_name, f"Merge Iter {len(history)+1}")
+                git_mgr.merge_to_dataset_branch(
+                    branch_name, dataset_branch, f"Merge Iter {len(history)+1}"
+                )
                 
                 # Append Changelog
                 with open("CHANGELOG.md", "a") as f:
@@ -169,9 +174,8 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. D
                 })
             else:
                 log_stage(f"Score degraded or unchanged. Discarding branch.")
-                git_mgr.discard_branch(branch_name)
-                # revert train_model.py to main's version
-                git_mgr.checkout_branch("main")
+                git_mgr.discard_branch(branch_name, dataset_branch)
+                git_mgr.checkout_branch(dataset_branch)
                 history.append({
                     "iteration": len(history)+1,
                     "commit": None,
@@ -183,8 +187,8 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. D
                 
         except Exception as e:
             log_error(f"Execution failed for iteration {i}", e)
-            git_mgr.discard_branch(branch_name)
-            git_mgr.checkout_branch("main")
+            git_mgr.discard_branch(branch_name, dataset_branch)
+            git_mgr.checkout_branch(dataset_branch)
             history.append({
                 "iteration": len(history)+1,
                 "commit": None,

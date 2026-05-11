@@ -2,7 +2,8 @@
 # Agentic AutoML Pipeline Configuration
 # ---------------------------------------------------------
 
-# The path to the training dataset CSV file (required)
+# The path to the training dataset CSV file (required).
+# Branch naming: paths like data/<name>/... use Git branch <name> for experiments (main stays backbone-only).
 dataset_path: "data/train.csv"
 
 # The exact name of the target column you want to predict (required)

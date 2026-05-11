@@ -3,7 +3,7 @@ import yaml
 from eda_engine import perform_eda
 from baseline_engine import evaluate_baselines
 from agent_loop import run_agent_loop
-from git_manager import GitManager
+from git_manager import GitManager, dataset_branch_from_dataset_path
 from logger import log_stage, log_error
 
 def main():
@@ -29,6 +29,10 @@ def main():
             raise ValueError("Configuration file must contain 'dataset_path' and 'target_col'")
 
         git_mgr = GitManager()
+        dataset_branch = dataset_branch_from_dataset_path(dataset_path)
+        had_commits = bool(git_mgr.repo.heads)
+        if had_commits:
+            git_mgr.ensure_dataset_branch(dataset_branch)
 
         # Phase 1: EDA
         eda_path = perform_eda(dataset_path)
@@ -43,6 +47,8 @@ def main():
         
         # Initial commit to secure baseline state
         git_mgr.commit_all(f"Initial Baseline Commit | CV Score: {base_score:.4f}")
+        if not had_commits:
+            git_mgr.ensure_dataset_branch_after_initial_commit(dataset_branch)
 
         # Phase 3: Agentic Loop
         run_agent_loop(
@@ -51,6 +57,7 @@ def main():
             base_score=base_score,
             git_mgr=git_mgr,
             task=task,
+            dataset_branch=dataset_branch,
             max_iterations=iterations,
             skip_confirmation=args.yes,
             timeout=timeout,
