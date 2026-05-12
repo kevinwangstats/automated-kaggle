@@ -122,11 +122,27 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. D
             if model_name.startswith("ollama"):
                 base = ollama_base_url or os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
                 completion_kwargs["api_base"] = base
+                
+                print(f"  [Info] Local Ollama model detected. Checking connection to {base} ...")
+                import urllib.request
+                import urllib.error
+                try:
+                    urllib.request.urlopen(base, timeout=3)
+                except urllib.error.URLError:
+                    print(f"  [Warning] Could not connect to Ollama at {base}.")
+                    print(f"  [Warning] Please ensure the Ollama app is running locally.")
+                print(f"  [Info] Waiting for Ollama response... (this may take a while depending on your hardware)")
+            else:
+                provider = model_name.split('/')[0] if '/' in model_name else model_name
+                print(f"  [Info] Using remote API ({provider}). Please ensure your {provider.upper()}_API_KEY is set if you haven't.")
+                print(f"  [Info] Waiting for API response...")
             
             response = completion(**completion_kwargs)
             llm_output = response.choices[0].message.content
         except Exception as e:
             log_error("LLM API Call failed", e)
+            if "ollama" in (model_name or "").lower():
+                print(f"  [Help] If you haven't pulled this model yet, open a new terminal and run: ollama pull {model_name.replace('ollama/', '')}")
             continue
             
         new_code = extract_python_code(llm_output)

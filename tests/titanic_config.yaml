@@ -23,7 +23,7 @@ metric: "roc_auc"
 iterations: 0
 
 # Generous timeout for CI runners
-timeout: 600
+timeout: 60
 
 # Weights & Biases configuration
 wandb:
