@@ -20,7 +20,7 @@ test_path: "data/titanic/test.csv"
 metric: "roc_auc"
 
 # Set to 0 to skip the LLM agent loop (baseline-only run)
-iterations: 0
+iterations: 3
 
 # Generous timeout for CI runners
 timeout: 60

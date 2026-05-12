@@ -220,3 +220,6 @@ __marimo__/
 # Ignore all data files, keep the folder structure via .gitkeep
 data/*
 !data/.gitkeep
+
+wandb/*
+catboost_info/*
