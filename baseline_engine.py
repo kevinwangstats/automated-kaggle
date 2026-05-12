@@ -110,7 +110,7 @@ if __name__ == "__main__":
     return script
 
 
-def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None, custom_metric: str = None):
+def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None, custom_metric: str = None, wandb_enabled: bool = False, wandb_project: str = None, wandb_entity: str = None):
     log_stage("Baseline Evaluation")
     try:
         df = pd.read_csv(dataset_path)
