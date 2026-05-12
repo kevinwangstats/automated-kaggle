@@ -53,6 +53,9 @@ def run_agent_loop(
     timeout: int = 600,
     model: str = None,
     ollama_base_url: str = None,
+    wandb_enabled: bool = False,
+    wandb_project: str = None,
+    wandb_entity: str = None,
 ):
     log_stage("Starting Agentic Loop")
     current_best_score = base_score
