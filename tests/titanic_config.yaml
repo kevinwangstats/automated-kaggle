@@ -16,6 +16,9 @@ dataset_path: "data/titanic/train.csv"
 target_col: "Survived"
 test_path: "data/titanic/test.csv"
 
+# LLM model to use
+model: ollama/qwen3.5:2b
+
 # roc_auc is standard for binary classification
 metric: "roc_auc"
 
