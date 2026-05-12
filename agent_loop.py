@@ -131,6 +131,11 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. D
             
         new_code = extract_python_code(llm_output)
         
+        # Extract summary/reasoning for W&B
+        llm_summary = re.sub(r'```python.*?```', '', llm_output, flags=re.DOTALL).strip()
+        if not llm_summary:
+            llm_summary = "No reasoning provided by LLM."
+        
         # Git Branch creation
         branch_name = git_mgr.create_experiment_branch(
             iteration=len(history) + 1, base_branch=dataset_branch
@@ -148,6 +153,18 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. D
             higher_is_better = (task == 'classification')
             
             improved = (new_score > current_best_score) if higher_is_better else (new_score < current_best_score)
+            
+            if wandb_enabled:
+                import wandb
+                wandb.init(
+                    project=wandb_project,
+                    entity=wandb_entity,
+                    name=f"iter_{len(history) + 1}",
+                    notes=llm_summary,
+                    config={"prompt": prompt, "model": model_name}
+                )
+                wandb.log({"cv_score": new_score, "improved": improved})
+                wandb.finish()
             
             if improved:
                 log_stage(f"Score improved! ({current_best_score:.4f} -> {new_score:.4f})")

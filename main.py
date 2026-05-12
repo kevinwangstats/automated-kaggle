@@ -25,6 +25,10 @@ def main():
         model = config.get('model', None)
         ollama_base_url = config.get('ollama_base_url', None)
         
+        wandb_config = config.get('wandb', {})
+        wandb_enabled = wandb_config.get('enabled', False)
+        wandb_entity = wandb_config.get('entity', 'kevinwangstats')
+        
         if not dataset_path or not target_col:
             raise ValueError("Configuration file must contain 'dataset_path' and 'target_col'")
 
@@ -34,6 +38,8 @@ def main():
         if had_commits:
             git_mgr.ensure_dataset_branch(dataset_branch)
 
+        wandb_project = dataset_branch
+
         # Phase 1: EDA
         eda_path = perform_eda(dataset_path)
 
@@ -42,7 +48,10 @@ def main():
             dataset_path=dataset_path, 
             target_col=target_col,
             test_path=test_path,
-            custom_metric=metric
+            custom_metric=metric,
+            wandb_enabled=wandb_enabled,
+            wandb_project=wandb_project,
+            wandb_entity=wandb_entity
         )
         
         # Initial commit to secure baseline state
@@ -62,7 +71,10 @@ def main():
             skip_confirmation=args.yes,
             timeout=timeout,
             model=model,
-            ollama_base_url=ollama_base_url
+            ollama_base_url=ollama_base_url,
+            wandb_enabled=wandb_enabled,
+            wandb_project=wandb_project,
+            wandb_entity=wandb_entity
         )
         
     except Exception as e:

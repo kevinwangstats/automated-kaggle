@@ -43,3 +43,8 @@ iterations: 5
 # The maximum execution time (in seconds) allowed for a single generated model script
 # This prevents the LLM from accidentally writing infinite loops or exhaustive grid searches.
 timeout: 600
+
+# Weights & Biases configuration
+wandb:
+  enabled: true
+  entity: "kevinwangstats"

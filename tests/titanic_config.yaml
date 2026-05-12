@@ -24,3 +24,8 @@ iterations: 0
 
 # Generous timeout for CI runners
 timeout: 600
+
+# Weights & Biases configuration
+wandb:
+  enabled: true
+  entity: "kevinwangstats"
