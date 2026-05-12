@@ -113,7 +113,7 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. D
         # Call LLM
         try:
             # Priority: config.yaml 'model' > AUTOML_MODEL env var > default
-            model_name = model or os.environ.get("AUTOML_MODEL", "gemini/gemini-1.5-flash")
+            model_name = model or os.environ.get("AUTOML_MODEL", "gemini/gemini-2.5-flash-lite")
             log_stage(f"Calling LLM: {model_name}")
             
             completion_kwargs = {

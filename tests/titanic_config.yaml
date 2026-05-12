@@ -28,6 +28,9 @@ iterations: 3
 # Generous timeout for CI runners
 timeout: 60
 
+# model: ollama/qwen3.5:2b
+model: gemini/gemini-2.5-flash-lite
+
 # Weights & Biases configuration
 wandb:
   enabled: true
