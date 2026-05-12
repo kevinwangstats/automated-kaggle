@@ -162,23 +162,38 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
                     scores = cross_val_score(model, X, y, cv=cv, scoring=scoring, n_jobs=-1)
                     results[m_name] = np.mean(scores)
                     
-                    if task == 'classification' and len(np.unique(y)) == 2:
+                    if task == 'classification':
                         from sklearn.model_selection import cross_val_predict
                         from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
                         
                         preds = cross_val_predict(model, X, y, cv=cv, n_jobs=-1)
                         acc = accuracy_score(y, preds)
-                        f1 = f1_score(y, preds)
-                        tn, fp, fn, tp = confusion_matrix(y, preds).ravel()
-                        sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0
-                        specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
                         
                         report = f"--- {m_name.upper()} ---\n"
-                        report += f"  Pos Cases: {tp+fn} | Neg Cases: {tn+fp}\n"
-                        report += f"  Accuracy:    {acc:.4f}\n"
-                        report += f"  F1 Score:    {f1:.4f}\n"
-                        report += f"  Sensitivity: {sensitivity:.4f}\n"
-                        report += f"  Specificity: {specificity:.4f}\n"
+                        
+                        if len(np.unique(y)) == 2:
+                            f1 = f1_score(y, preds)
+                            tn, fp, fn, tp = confusion_matrix(y, preds).ravel()
+                            sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0
+                            specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+                            
+                            report += f"  Pos Cases: {tp+fn} | Neg Cases: {tn+fp}\n"
+                            report += f"  Accuracy:    {acc:.4f}\n"
+                            report += f"  F1 Score:    {f1:.4f}\n"
+                            report += f"  Sensitivity: {sensitivity:.4f}\n"
+                            report += f"  Specificity: {specificity:.4f}\n"
+                        else:
+                            f1_macro = f1_score(y, preds, average='macro')
+                            f1_micro = f1_score(y, preds, average='micro')
+                            
+                            unique, counts = np.unique(y, return_counts=True)
+                            class_counts = dict(zip(unique, counts))
+                            
+                            report += f"  Classes: {len(unique)} | Counts: {class_counts}\n"
+                            report += f"  Accuracy:    {acc:.4f}\n"
+                            report += f"  Macro F1:    {f1_macro:.4f}\n"
+                            report += f"  Micro F1:    {f1_micro:.4f}\n"
+                            
                         metric_reports[m_name] = report
                 except Exception as e:
                     pass
@@ -186,7 +201,10 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
         # Print detailed reports outside the suppression block
         if metric_reports:
             print("\n" + "="*30)
-            print("DETAILED BASELINE METRICS (Binary Classification)")
+            if len(np.unique(y)) == 2:
+                print("DETAILED BASELINE METRICS (Binary Classification)")
+            else:
+                print("DETAILED BASELINE METRICS (Multi-class Classification)")
             for r in metric_reports.values():
                 print(r)
             print("="*30 + "\n")

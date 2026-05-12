@@ -7,7 +7,7 @@ This repository serves as a ready-to-use template for automated, agentic modelin
 The system consists of the following core components:
 
 1. **EDA Engine**: Automatically performs Exploratory Data Analysis on a given dataset and outputs a concise `EDA.md` summary for the LLM context.
-2. **Baseline Engine**: Evaluates standard frameworks (XGBoost, LightGBM, CatBoost) using K-Fold Cross-Validation to establish a baseline model and starting script. For binary classification tasks, it automatically generates detailed out-of-fold metrics including Accuracy, F1 Score, Sensitivity, Specificity, and Positive/Negative case counts.
+2. **Baseline Engine**: Evaluates standard frameworks (XGBoost, LightGBM, CatBoost) using K-Fold Cross-Validation to establish a baseline model and starting script. For binary classification tasks, it automatically generates detailed out-of-fold metrics including Accuracy, F1 Score, Sensitivity, Specificity, and Positive/Negative case counts. For multi-class tasks, it provides Accuracy, Macro/Micro F1 Scores, and class distribution counts.
 3. **Agent Loop**: An orchestrator powered by `litellm` that feeds the dataset context, current code, and performance history to an LLM. The LLM edits the Python training script to improve the cross-validation score.
 4. **Git Manager**: Ensures strict provenance. Every experiment runs on a separate `experiment/iter_<N>` branch. Successful iterations (those that beat the current best CV score) are merged into `main` and tracked.
 
