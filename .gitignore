@@ -217,4 +217,6 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-data/titanic/*
+# Ignore all data files, keep the folder structure via .gitkeep
+data/*
+!data/.gitkeep

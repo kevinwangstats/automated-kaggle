@@ -92,6 +92,37 @@ python main.py --config custom_config.yaml -y
 
 ## Git branches
 
+This project enforces a strictly data-agnostic workflow. The core codebase remains on `main`, while data-specific iterations and configurations are isolated to dataset branches. All actual dataset files are ignored by git.
+
+Here is the structural mapping of how files and branches interact:
+
+```text
+automated-kaggle/
+├── [Branch: main] Core Files (Project-Agnostic)
+│   ├── main.py
+│   ├── config.yaml (default template)
+│   ├── agent_loop.py
+│   ├── baseline_engine.py
+│   ├── eda_engine.py
+│   ├── git_manager.py
+│   └── logger.py
+│
+├── [Branch: <dataset>] Data-Specific Output (Derived from dataset folder)
+│   ├── train_model.py (generated)
+│   ├── EDA.md (generated)
+│   ├── config.yaml (dataset-specific tweaks)
+│   ├── history.json
+│   └── CHANGELOG.md
+│
+└── data/ (Git-ignored entirely except .gitkeep)
+    ├── .gitkeep
+    ├── titanic/          --> Maps to branch "titanic"
+    │   ├── train.csv     (Untracked)
+    │   └── test.csv      (Untracked)
+    └── my-competition/   --> Maps to branch "my-competition"
+        └── train.csv     (Untracked)
+```
+
 - **`main`**: Keep shared **backbone** here (orchestration, engines, generic defaults). Avoid landing competition-specific artifacts on `main` when you can keep them on a dataset branch instead.
 - **Dataset branch**: Derived from `dataset_path` in `config.yaml`. Examples:
   - `data/titanic/train.csv` → branch **`titanic`**
