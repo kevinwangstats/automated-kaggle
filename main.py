@@ -32,9 +32,37 @@ def main():
         if not dataset_path or not target_col:
             raise ValueError("Configuration file must contain 'dataset_path' and 'target_col'")
 
+        import sys
         git_mgr = GitManager()
         dataset_branch = dataset_branch_from_dataset_path(dataset_path)
         had_commits = bool(git_mgr.repo.heads)
+        
+        if had_commits and git_mgr.is_on_main() and dataset_branch != "main":
+            if git_mgr.has_uncommitted_changes():
+                print("\n[Warning] You have uncommitted changes on the 'main' branch.")
+                print("You will not be running the latest software unless you commit.")
+                ans = input("Are you happy to git add all file changes, commit, and push before proceeding to work on the dataset branch? (y/n): ")
+                if ans.lower() == 'y':
+                    msg = input("Enter commit message: ")
+                    if not msg: msg = "Update core files"
+                    git_mgr.commit_all(msg)
+                    try:
+                        git_mgr.repo.remotes.origin.push()
+                        print("Pushed to origin.")
+                    except Exception as e:
+                        print(f"Push to origin skipped/failed: {e}")
+                else:
+                    print("Aborting. Please stash or commit your changes manually before proceeding to avoid conflicts.")
+                    sys.exit(1)
+            
+            if git_mgr.branch_exists(dataset_branch) and not git_mgr.is_branch_based_on_latest_main(dataset_branch):
+                print(f"\n[Warning] The dataset branch '{dataset_branch}' already exists, but it is not based off the latest commit on 'main'.")
+                print("You will not be running the latest software for this dataset.")
+                ans = input(f"Would you like to delete the '{dataset_branch}' branch by force to start fresh from the latest main? (y/n): ")
+                if ans.lower() == 'y':
+                    git_mgr.delete_branch(dataset_branch)
+                    print(f"Deleted outdated dataset branch '{dataset_branch}'.")
+
         if had_commits:
             git_mgr.ensure_dataset_branch(dataset_branch)
             git_mgr.revert_changes()

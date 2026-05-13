@@ -142,3 +142,34 @@ class GitManager:
 
     def get_current_commit(self):
         return self.repo.head.commit.hexsha
+
+    def is_on_main(self) -> bool:
+        if not self.repo.heads:
+            return False
+        try:
+            return self.repo.active_branch.name == 'main'
+        except TypeError:
+            return False # Detached HEAD
+
+    def has_uncommitted_changes(self) -> bool:
+        return self.repo.is_dirty(untracked_files=True)
+
+    def branch_exists(self, branch_name: str) -> bool:
+        if not self.repo.heads:
+            return False
+        return branch_name in [h.name for h in self.repo.heads]
+
+    def is_branch_based_on_latest_main(self, branch_name: str) -> bool:
+        if not self.branch_exists(branch_name) or not self.branch_exists('main'):
+            return True
+        try:
+            # Check if main is an ancestor of the branch
+            return self.repo.is_ancestor(self.repo.heads.main.commit, self.repo.heads[branch_name].commit)
+        except Exception:
+            return False
+            
+    def delete_branch(self, branch_name: str):
+        try:
+            self.repo.git.branch('-D', branch_name)
+        except Exception as e:
+            log_error(f"Failed to delete branch {branch_name}", e)
