@@ -165,12 +165,7 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. D
         if not llm_summary:
             llm_summary = "No reasoning provided by LLM."
         
-        # Git Branch creation
-        branch_name = git_mgr.create_experiment_branch(
-            iteration=len(history) + 1, base_branch=dataset_branch
-        )
-        
-        # Write new code
+        # Write new code directly on the dataset branch
         with open("train_model.py", "w") as f:
             f.write(new_code)
             
@@ -199,11 +194,8 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. D
                 log_stage(f"Score improved! ({current_best_score:.4f} -> {new_score:.4f})")
                 current_best_score = new_score
                 
-                # Commit and merge
+                # Commit directly to the dataset branch
                 commit_id = git_mgr.commit_all(f"[Iter {len(history)+1} | CV Score: {new_score:.4f}] Successful agent iteration")
-                git_mgr.merge_to_dataset_branch(
-                    branch_name, dataset_branch, f"Merge Iter {len(history)+1}"
-                )
                 
                 # Append Changelog
                 with open("CHANGELOG.md", "a") as f:
@@ -219,10 +211,7 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. D
                     "response": llm_output
                 })
             else:
-                log_stage(f"Score degraded or unchanged. Leaving changes in workspace for next iteration to retry.")
-                git_mgr.discard_branch(branch_name, dataset_branch)
-                # Intentionally NOT calling git_mgr.revert_changes() here 
-                # so the script is available in the next iteration's prompt.
+                log_stage(f"Score degraded or unchanged. Leaving changes uncommitted in workspace for next iteration to retry.")
                 history.append({
                     "iteration": len(history)+1,
                     "commit": None,
@@ -234,9 +223,6 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. D
                 
         except Exception as e:
             log_error(f"Execution failed for iteration {i}", e)
-            git_mgr.discard_branch(branch_name, dataset_branch)
-            # Intentionally NOT calling git_mgr.revert_changes() here
-            # so the broken script is available in the next iteration's prompt.
             history.append({
                 "iteration": len(history)+1,
                 "commit": None,

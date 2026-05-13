@@ -8,8 +8,8 @@ The system consists of the following core components:
 
 1. **EDA Engine**: Automatically performs Exploratory Data Analysis on a given dataset and outputs a concise `EDA.md` summary for the LLM context.
 2. **Baseline Engine**: Evaluates standard frameworks (XGBoost, LightGBM, CatBoost) using K-Fold Cross-Validation to establish a baseline model and starting script. For binary classification tasks, it automatically generates detailed out-of-fold metrics including Accuracy, F1 Score, Sensitivity, Specificity, and Positive/Negative case counts. For multi-class tasks, it provides Accuracy, Macro/Micro F1 Scores, and class distribution counts.
-3. **Agent Loop**: An orchestrator powered by `litellm` that feeds the dataset context, current code, and performance history to an LLM. The LLM edits the Python training script to improve the cross-validation score. If an iteration fails (due to timeout or error), the broken code is retained in the working directory so the next iteration can attempt to fix it, without polluting the git history.
-4. **Git Manager**: Ensures strict provenance. Every experiment runs on a separate `experiment/iter_<N>` branch. Successful iterations (those that beat the current best CV score) are merged into the dataset branch and tracked.
+3. **Agent Loop**: An orchestrator powered by `litellm` that feeds the dataset context, current code, and performance history to an LLM. The LLM edits the Python training script directly on the dataset branch to improve the cross-validation score. If an iteration succeeds, it is immediately committed. If an iteration fails (due to timeout or error), the broken code is retained uncommitted in the working directory so the next iteration can attempt to fix it.
+4. **Git Manager**: Ensures strict provenance. All dataset-specific work runs on a dedicated dataset branch. Successful iterations are directly committed and tracked.
 
 ## Git Branches and Provenance
 
@@ -50,7 +50,7 @@ automated-kaggle/
   - `data/my-competition/train.csv` → **`my-competition`**
   - `data/train.csv` (file directly under `data/`) → branch named from the file stem, e.g. **`train`**
 
-When you run the pipeline, it checks out `main`, then creates or checks out the dataset branch. Baseline and agent commits (including merges from successful `experiment/iter_*` runs) go to the **dataset** branch. Failed experiments delete the experiment branch but leave the changes in the working directory for the next iteration to debug.
+When you run the pipeline, it checks out `main`, syncs branches, then creates or checks out the dataset branch. Baseline and agent commits go directly to the **dataset** branch. Failed experiments simply leave the file changes uncommitted in the working directory for the next iteration to debug.
 
 On a **brand-new** repository with no commits yet, the first baseline commit still creates `main`; the pipeline then creates the dataset branch at the same commit and continues there so later work stays off `main` until you merge intentionally.
 

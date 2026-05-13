@@ -104,21 +104,8 @@ class GitManager:
         self.repo.git.checkout(dataset_branch)
         log_stage(f"Switched to dataset branch: {dataset_branch}")
 
-    def create_experiment_branch(self, iteration: int, base_branch: str):
-        branch_name = f"experiment/iter_{iteration}"
-        self.repo.git.checkout(base_branch)
-        self.repo.git.checkout("-b", branch_name)
-        return branch_name
-
     def checkout_branch(self, branch_name: str):
         self.repo.git.checkout(branch_name)
-
-    def merge_to_dataset_branch(
-        self, experiment_branch: str, dataset_branch: str, message: str
-    ):
-        self.repo.git.checkout(dataset_branch)
-        self.repo.git.merge(experiment_branch, "--no-ff", "-m", message)
-        return self.repo.head.commit.hexsha
 
     def revert_changes(self):
         """Discards all local changes in the working directory."""
@@ -128,17 +115,6 @@ class GitManager:
             log_stage("Reverted local changes and cleaned working directory.")
         except Exception as e:
             log_error("Failed to revert changes", e)
-
-    def discard_branch(self, experiment_branch: str, dataset_branch: str):
-        """Switches back to dataset_branch and deletes the experiment_branch, discarding changes."""
-        try:
-            self.repo.git.checkout(dataset_branch, force=True)
-            self.repo.git.branch("-D", experiment_branch)
-            log_stage(f"Discarded experiment branch {experiment_branch}")
-        except Exception as e:
-            log_error(f"Failed to discard branch {experiment_branch}", e)
-            # Fallback attempt to just get back to a safe state
-            self.checkout_branch(dataset_branch)
 
     def get_current_commit(self):
         return self.repo.head.commit.hexsha
