@@ -74,16 +74,25 @@ def run_agent_loop(
     for i in range(1, max_iterations + 1):
         log_stage(f"Iteration {i}")
         
+        # We ensure we are on the dataset branch, but we DO NOT revert changes.
+        # This allows a broken script from a failed previous iteration to persist
+        # so the LLM can read it and attempt to fix its own errors.
+        git_mgr.checkout_branch(dataset_branch)
+        
         current_script = read_file("train_model.py")
         history_context = ""
         if len(history) > 0:
             last_run = history[-1]
             if last_run.get('error'):
-                history_context = f"\\nPREVIOUS RUN FAILED WITH ERROR:\\n{last_run['error']}\\nPlease fix this error.\\n"
+                history_context = f"\nPREVIOUS RUN FAILED WITH ERROR:\n{last_run['error']}\nPlease fix this error in the current script.\n"
             elif not last_run.get('improved'):
-                history_context = f"\\nPREVIOUS RUN DEGRADED SCORE ({last_run.get('score')} vs Best: {current_best_score}). Try a different approach.\\n"
+                # If it ran but didn't improve, we might want to keep the new logic but tweak it, 
+                # or the prompt will just tell it to try another approach on the existing script.
+                history_context = f"\nPREVIOUS RUN DEGRADED SCORE ({last_run.get('score')} vs Best: {current_best_score}). Try a different approach.\n"
             else:
-                history_context = f"\\nPREVIOUS RUN IMPROVED SCORE TO {last_run.get('score')}. Good job, keep going!\\n"
+                # If the previous run improved, the dataset branch was already merged and is clean,
+                # so the current_script is the new baseline.
+                history_context = f"\nPREVIOUS RUN IMPROVED SCORE TO {last_run.get('score')}. Good job, keep going!\n"
 
         prompt = f"""You are an expert AI Data Scientist. Your goal is to improve the Cross-Validation score of the model.
 
@@ -119,7 +128,8 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. D
             completion_kwargs = {
                 "model": model_name,
                 "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.4
+                "temperature": 0.4,
+                "request_timeout": 120  # Ensure LLM call doesn't hang indefinitely
             }
             # Ollama requires an api_base pointing to the local server
             if model_name.startswith("ollama"):
@@ -209,9 +219,10 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. D
                     "response": llm_output
                 })
             else:
-                log_stage(f"Score degraded or unchanged. Discarding branch.")
+                log_stage(f"Score degraded or unchanged. Leaving changes in workspace for next iteration to retry.")
                 git_mgr.discard_branch(branch_name, dataset_branch)
-                git_mgr.checkout_branch(dataset_branch)
+                # Intentionally NOT calling git_mgr.revert_changes() here 
+                # so the script is available in the next iteration's prompt.
                 history.append({
                     "iteration": len(history)+1,
                     "commit": None,
@@ -224,7 +235,8 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. D
         except Exception as e:
             log_error(f"Execution failed for iteration {i}", e)
             git_mgr.discard_branch(branch_name, dataset_branch)
-            git_mgr.checkout_branch(dataset_branch)
+            # Intentionally NOT calling git_mgr.revert_changes() here
+            # so the broken script is available in the next iteration's prompt.
             history.append({
                 "iteration": len(history)+1,
                 "commit": None,

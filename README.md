@@ -2,14 +2,7 @@
 
 This repository serves as a ready-to-use template for automated, agentic modeling on **tabular** Kaggle data challenges. It implements an LLM-driven pipeline that iteratively improves machine learning model performance on tabular datasets through reasoning and code generation.
 
-## Architecture
-
-The system consists of the following core components:
-
-1. **EDA Engine**: Automatically performs Exploratory Data Analysis on a given dataset and outputs a concise `EDA.md` summary for the LLM context.
-2. **Baseline Engine**: Evaluates standard frameworks (XGBoost, LightGBM, CatBoost) using K-Fold Cross-Validation to establish a baseline model and starting script. For binary classification tasks, it automatically generates detailed out-of-fold metrics including Accuracy, F1 Score, Sensitivity, Specificity, and Positive/Negative case counts. For multi-class tasks, it provides Accuracy, Macro/Micro F1 Scores, and class distribution counts.
-3. **Agent Loop**: An orchestrator powered by `litellm` that feeds the dataset context, current code, and performance history to an LLM. The LLM edits the Python training script to improve the cross-validation score.
-4. **Git Manager**: Ensures strict provenance. Every experiment runs on a separate `experiment/iter_<N>` branch. Successful iterations (those that beat the current best CV score) are merged into `main` and tracked.
+If you are looking for technical details on how the pipeline is built, its architecture, or how to contribute, please see [DEVELOPERS.md](DEVELOPERS.md).
 
 ## Setup Instructions
 
@@ -60,9 +53,9 @@ The system consists of the following core components:
 
 ## Usage
 
-This template now uses a YAML configuration file as the single source of truth for your pipeline inputs, providing a cleaner level of abstraction.
+This template uses a YAML configuration file as the single source of truth for your pipeline inputs.
 
-1. Open `config.yaml` and configure your paths and metrics. Use a per-competition folder under `data/` (for example `data/titanic/train.csv`) so Git work lands on a matching branch name (see [Git branches](#git-branches)).
+1. Open `config.yaml` and configure your paths and metrics. Use a per-competition folder under `data/` (for example `data/titanic/train.csv`).
 
 ```yaml
 dataset_path: "data/train.csv"
@@ -73,7 +66,7 @@ iterations: 5
 timeout: 600
 ```
 
-1. To kick off the pipeline, simply run the orchestrator:
+2. To kick off the pipeline, simply run the orchestrator:
 
 ```bash
 python main.py
@@ -90,66 +83,11 @@ python main.py --config custom_config.yaml -y
 - `--config`: Path to a custom YAML configuration file (default: `config.yaml`).
 - `-y`: Skip the manual user confirmation prompt before each LLM API call.
 
-## Git branches
+## Outputs and Tracking
 
-This project enforces a strictly data-agnostic workflow. The core codebase remains on `main`, while data-specific iterations and configurations are isolated to dataset branches. All actual dataset files are ignored by git.
+When you run the pipeline, it generates several files to track its progress:
 
-Here is the structural mapping of how files and branches interact:
-
-```text
-automated-kaggle/
-├── [Branch: main] Core Files (Project-Agnostic)
-│   ├── main.py
-│   ├── config.yaml (default template)
-│   ├── agent_loop.py
-│   ├── baseline_engine.py
-│   ├── eda_engine.py
-│   ├── git_manager.py
-│   └── logger.py
-│
-├── [Branch: <dataset>] Data-Specific Output (Derived from dataset folder)
-│   ├── train_model.py (generated)
-│   ├── EDA.md (generated)
-│   ├── config.yaml (dataset-specific tweaks)
-│   ├── history.json
-│   └── CHANGELOG.md
-│
-└── data/ (Git-ignored entirely except .gitkeep)
-    ├── .gitkeep
-    ├── titanic/          --> Maps to branch "titanic"
-    │   ├── train.csv     (Untracked)
-    │   └── test.csv      (Untracked)
-    └── my-competition/   --> Maps to branch "my-competition"
-        └── train.csv     (Untracked)
-```
-
-- **`main`**: Keep shared **backbone** here (orchestration, engines, generic defaults). Avoid landing competition-specific artifacts on `main` when you can keep them on a dataset branch instead.
-- **Dataset branch**: Derived from `dataset_path` in `config.yaml`. Examples:
-  - `data/titanic/train.csv` → branch **`titanic`**
-  - `data/my-competition/train.csv` → **`my-competition`**
-  - `data/train.csv` (file directly under `data/`) → branch named from the file stem, e.g. **`train`**
-
-When you run the pipeline, it checks out `main`, then creates or checks out the dataset branch. Baseline and agent commits (including merges from successful `experiment/iter_*` runs) go to the **dataset** branch. Failed experiments delete the experiment branch and return to the dataset branch.
-
-On a **brand-new** repository with no commits yet, the first baseline commit still creates `main`; the pipeline then creates the dataset branch at the same commit and continues there so later work stays off `main` until you merge intentionally.
-
-## Logs and Tracking
-
+- **`train_model.py`**: The current best Python script generated by the pipeline.
+- **`EDA.md`**: An automatically generated exploratory data analysis summary.
 - **`CHANGELOG.md`**: Stores a human-readable summary of every successful iteration.
 - **`history.json`**: Stores granular metrics, hyperparameters, and git commits for every attempt.
-- The pipeline uses a custom token-efficient logger to minimize noise during execution.
-
-## CI/CD
-
-This template includes a GitHub Actions workflow (`.github/workflows/titanic_ci.yml`) that automatically validates the pipeline on every push to `main` using the classic [Titanic dataset](https://www.kaggle.com/competitions/titanic/overview). It runs the EDA and Baseline engines with `iterations: 0` to skip LLM calls entirely, ensuring the core pipeline is always functional at zero API cost.
-
-The test configuration lives at `tests/titanic_config.yaml` and can also be run **locally**:
-
-```bash
-kaggle competitions download -c titanic -p data/titanic && unzip data/titanic/titanic.zip -d data/titanic/
-python main.py --config tests/titanic_config.yaml -y
-```
-
-**Required GitHub Repository Secret:**
-
-- `KAGGLE_API_TOKEN`: Your Kaggle access token (generate at kaggle.com > Account Settings > API).

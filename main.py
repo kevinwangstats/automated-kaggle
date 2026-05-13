@@ -37,6 +37,7 @@ def main():
         had_commits = bool(git_mgr.repo.heads)
         if had_commits:
             git_mgr.ensure_dataset_branch(dataset_branch)
+            git_mgr.revert_changes()
 
         wandb_project = dataset_branch
 

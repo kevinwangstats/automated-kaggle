@@ -57,69 +57,43 @@ class GitManager:
 
     def commit_all(self, message: str) -> str:
         self.repo.git.add(A=True)
-        is_first_commit = not bool(self.repo.heads)
-        
-        if self.repo.is_dirty(untracked_files=True) or is_first_commit:
-            commit = self.repo.index.commit(message)
-            
-            if is_first_commit:
+        try:
+            if self.repo.is_dirty(untracked_files=True):
+                commit = self.repo.index.commit(message)
+                return commit.hexsha
+            # If not dirty, but no commits yet (initial repo)
+            if not self.repo.heads:
+                commit = self.repo.index.commit(message)
                 try:
                     if self.repo.active_branch.name != 'main':
                         self.repo.git.branch('-m', 'main')
                 except Exception:
                     pass
-                    
-            return commit.hexsha
-        return self.repo.head.commit.hexsha
+                return commit.hexsha
+        except Exception as e:
+            log_error("Commit failed", e)
+            
+        return self.get_current_commit() if self.repo.heads else ""
 
-    def ensure_dataset_branch(self, dataset_branch: str) -> None:
-        """
-        Checkout the branch used for this dataset (create from main if missing).
-        No-op if there are no commits yet (first baseline will create main first).
-        """
-        if not self.repo.heads:
-            return
-        if dataset_branch == "main":
-            self.repo.git.checkout("main")
-            log_stage("Dataset path maps to branch 'main'; using main.")
-            return
-        self.repo.git.checkout("main")
-        head_names = [h.name for h in self.repo.heads]
-        if dataset_branch in head_names:
-            self.repo.git.checkout(dataset_branch)
-        else:
-            self.repo.git.checkout("-b", dataset_branch)
-        log_stage(f"Dataset work branch: {dataset_branch}")
-
-    def ensure_dataset_branch_after_initial_commit(self, dataset_branch: str) -> None:
-        """After the first-ever commit (created main), add/switch to the dataset branch."""
-        if not self.repo.heads or dataset_branch == "main":
-            return
-        head_names = [h.name for h in self.repo.heads]
-        if dataset_branch not in head_names:
-            self.repo.git.branch(dataset_branch)
-        self.repo.git.checkout(dataset_branch)
-        log_stage(f"Switched to dataset branch: {dataset_branch}")
-
-    def create_experiment_branch(self, iteration: int, base_branch: str):
-        branch_name = f"experiment/iter_{iteration}"
-        self.repo.git.checkout(base_branch)
-        self.repo.git.checkout("-b", branch_name)
-        return branch_name
-
-    def checkout_branch(self, branch_name: str):
-        self.repo.git.checkout(branch_name)
-
-    def merge_to_dataset_branch(
-        self, experiment_branch: str, dataset_branch: str, message: str
-    ):
-        self.repo.git.checkout(dataset_branch)
-        self.repo.git.merge(experiment_branch, "--no-ff", "-m", message)
-        return self.repo.head.commit.hexsha
+    def revert_changes(self):
+        """Discards all local changes in the working directory."""
+        try:
+            self.repo.git.checkout(".")
+            self.repo.git.clean("-fd")
+            log_stage("Reverted local changes and cleaned working directory.")
+        except Exception as e:
+            log_error("Failed to revert changes", e)
 
     def discard_branch(self, experiment_branch: str, dataset_branch: str):
-        self.repo.git.checkout(dataset_branch)
-        self.repo.git.branch("-D", experiment_branch)
+        """Switches back to dataset_branch and deletes the experiment_branch, discarding changes."""
+        try:
+            self.repo.git.checkout(dataset_branch, force=True)
+            self.repo.git.branch("-D", experiment_branch)
+            log_stage(f"Discarded experiment branch {experiment_branch}")
+        except Exception as e:
+            log_error(f"Failed to discard branch {experiment_branch}", e)
+            # Fallback attempt to just get back to a safe state
+            self.checkout_branch(dataset_branch)
 
     def get_current_commit(self):
         return self.repo.head.commit.hexsha
