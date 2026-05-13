@@ -82,16 +82,26 @@ class GitManager:
         """
         if not self.repo.heads:
             return
+            
+        try:
+            if self.repo.active_branch.name == dataset_branch:
+                log_stage(f"Already on dataset work branch: {dataset_branch}")
+                return
+        except TypeError:
+            pass # Detached HEAD, continue with normal logic
+
         if dataset_branch == "main":
             self.repo.git.checkout("main")
             log_stage("Dataset path maps to branch 'main'; using main.")
             return
-        self.repo.git.checkout("main")
+            
         head_names = [h.name for h in self.repo.heads]
         if dataset_branch in head_names:
             self.repo.git.checkout(dataset_branch)
         else:
+            self.repo.git.checkout("main")
             self.repo.git.checkout("-b", dataset_branch)
+            
         log_stage(f"Dataset work branch: {dataset_branch}")
 
     def ensure_dataset_branch_after_initial_commit(self, dataset_branch: str) -> None:
