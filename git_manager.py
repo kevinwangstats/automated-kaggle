@@ -75,6 +75,51 @@ class GitManager:
             
         return self.get_current_commit() if self.repo.heads else ""
 
+    def ensure_dataset_branch(self, dataset_branch: str) -> None:
+        """
+        Checkout the branch used for this dataset (create from main if missing).
+        No-op if there are no commits yet (first baseline will create main first).
+        """
+        if not self.repo.heads:
+            return
+        if dataset_branch == "main":
+            self.repo.git.checkout("main")
+            log_stage("Dataset path maps to branch 'main'; using main.")
+            return
+        self.repo.git.checkout("main")
+        head_names = [h.name for h in self.repo.heads]
+        if dataset_branch in head_names:
+            self.repo.git.checkout(dataset_branch)
+        else:
+            self.repo.git.checkout("-b", dataset_branch)
+        log_stage(f"Dataset work branch: {dataset_branch}")
+
+    def ensure_dataset_branch_after_initial_commit(self, dataset_branch: str) -> None:
+        """After the first-ever commit (created main), add/switch to the dataset branch."""
+        if not self.repo.heads or dataset_branch == "main":
+            return
+        head_names = [h.name for h in self.repo.heads]
+        if dataset_branch not in head_names:
+            self.repo.git.branch(dataset_branch)
+        self.repo.git.checkout(dataset_branch)
+        log_stage(f"Switched to dataset branch: {dataset_branch}")
+
+    def create_experiment_branch(self, iteration: int, base_branch: str):
+        branch_name = f"experiment/iter_{iteration}"
+        self.repo.git.checkout(base_branch)
+        self.repo.git.checkout("-b", branch_name)
+        return branch_name
+
+    def checkout_branch(self, branch_name: str):
+        self.repo.git.checkout(branch_name)
+
+    def merge_to_dataset_branch(
+        self, experiment_branch: str, dataset_branch: str, message: str
+    ):
+        self.repo.git.checkout(dataset_branch)
+        self.repo.git.merge(experiment_branch, "--no-ff", "-m", message)
+        return self.repo.head.commit.hexsha
+
     def revert_changes(self):
         """Discards all local changes in the working directory."""
         try:
