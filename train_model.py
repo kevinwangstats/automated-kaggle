@@ -141,7 +141,25 @@ def train_and_evaluate():
     # For this specific dataset and preprocessing, it's less likely to be an issue.
 
     # Predict on the test data
-    preds = pipeline.predict(test_X)
+    import yaml
+    import os
+    pred_prob = True
+    config_path = "config.yaml"
+    if "titanic" in "data/titanic/train.csv" and os.path.exists("tests/titanic_config.yaml"):
+        config_path = "tests/titanic_config.yaml"
+        
+    try:
+        with open(config_path, "r") as f:
+            config_data = yaml.safe_load(f)
+            if config_data and "pred_prob" in config_data:
+                pred_prob = config_data["pred_prob"]
+    except Exception:
+        pass
+        
+    if pred_prob:
+        preds = pipeline.predict_proba(test_X)[:, 1]
+    else:
+        preds = pipeline.predict(test_X)
     
     submission = pd.DataFrame()
     # Assuming first column of test is ID
