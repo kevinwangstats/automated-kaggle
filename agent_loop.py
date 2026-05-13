@@ -180,15 +180,15 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. D
             
             if wandb_enabled:
                 import wandb
-                wandb.init(
-                    project=wandb_project,
-                    entity=wandb_entity,
-                    name=f"iter_{len(history) + 1}",
-                    notes=llm_summary,
-                    config={"prompt": prompt, "model": model_name}
-                )
-                wandb.log({"cv_score": new_score, "improved": improved})
-                wandb.finish()
+                
+                wandb.log({
+                    "cv_score": new_score, 
+                    "improved": improved,
+                    "iteration": len(history) + 1,
+                    "model_used": model_name,
+                    "llm_summary": wandb.Html(f"<pre>{llm_summary}</pre>"),
+                    "prompt": wandb.Html(f"<pre>{prompt}</pre>")
+                })
             
             if improved:
                 log_stage(f"Score improved! ({current_best_score:.4f} -> {new_score:.4f})")

@@ -220,18 +220,7 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
 
         if wandb_enabled:
             import wandb
-            wandb.init(
-                project=wandb_project,
-                entity=wandb_entity,
-                name="iter_0_baseline",
-                config={
-                    "dataset_path": dataset_path,
-                    "target_col": target_col,
-                    "metric": custom_metric if custom_metric else ('roc_auc' if task == 'classification' else 'neg_mean_squared_error')
-                }
-            )
-            wandb.log({"cv_score": best_score, "best_model": best_model})
-            wandb.finish()
+            wandb.log({"cv_score": best_score, "best_model": best_model, "iteration": 0})
         
         # Generate the script for the best model
         script_content = create_template_script(dataset_path, target_col, best_model, test_path, custom_metric)

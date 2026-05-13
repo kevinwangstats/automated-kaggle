@@ -69,6 +69,21 @@ def main():
 
         wandb_project = dataset_branch
 
+        if wandb_enabled:
+            import wandb
+            wandb.init(
+                project=wandb_project,
+                entity=wandb_entity,
+                name=f"{dataset_branch}_run",
+                config={
+                    "dataset_path": dataset_path,
+                    "target_col": target_col,
+                    "metric": metric,
+                    "iterations": iterations,
+                    "model": model
+                }
+            )
+
         # Phase 1: EDA
         eda_path = perform_eda(dataset_path)
 
@@ -106,8 +121,14 @@ def main():
             wandb_entity=wandb_entity
         )
         
+        if wandb_enabled:
+            wandb.finish()
+            
     except Exception as e:
         log_error("Pipeline failed with a critical error", e)
+        if 'wandb_enabled' in locals() and wandb_enabled:
+            import wandb
+            wandb.finish()
 
 if __name__ == "__main__":
     main()
