@@ -23,7 +23,7 @@ model: ollama/qwen3.5:2b
 metric: "roc_auc"
 
 # Set to 0 to skip the LLM agent loop (baseline-only run)
-iterations: 3
+iterations: 5
 
 # Generous timeout for CI runners
 timeout: 60
