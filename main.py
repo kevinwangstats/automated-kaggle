@@ -10,6 +10,7 @@ def main():
     parser = argparse.ArgumentParser(description="Agentic AutoML Pipeline")
     parser.add_argument("--config", type=str, default="config.yaml", help="Path to YAML configuration file")
     parser.add_argument("-y", "--yes", action="store_true", help="Skip user confirmation before LLM calls")
+    parser.add_argument("-r", "--resume", action="store_true", help="Resume from previous iterations")
     args = parser.parse_args()
 
     try:
@@ -33,6 +34,8 @@ def main():
             raise ValueError("Configuration file must contain 'dataset_path' and 'target_col'")
 
         import sys
+        import os
+        import pandas as pd
         git_mgr = GitManager()
         dataset_branch = dataset_branch_from_dataset_path(dataset_path)
         had_commits = bool(git_mgr.repo.heads)
@@ -65,43 +68,68 @@ def main():
 
         if had_commits:
             git_mgr.ensure_dataset_branch(dataset_branch)
-            git_mgr.revert_changes()
+            if not args.resume:
+                git_mgr.revert_changes()
 
         wandb_project = dataset_branch
 
         if wandb_enabled:
             import wandb
-            wandb.init(
-                project=wandb_project,
-                entity=wandb_entity,
-                name=f"{dataset_branch}_run",
-                config={
+            run_id_file = "wandb_run_id.txt"
+            
+            init_kwargs = {
+                "project": wandb_project,
+                "entity": wandb_entity,
+                "name": f"{dataset_branch}_run",
+                "config": {
                     "dataset_path": dataset_path,
                     "target_col": target_col,
                     "metric": metric,
                     "iterations": iterations,
                     "model": model
                 }
+            }
+            
+            if args.resume and os.path.exists(run_id_file):
+                with open(run_id_file, "r") as f:
+                    saved_run_id = f.read().strip()
+                if saved_run_id:
+                    init_kwargs["id"] = saved_run_id
+                    init_kwargs["resume"] = "must"
+                    
+            wandb.init(**init_kwargs)
+            
+            if not args.resume or not os.path.exists(run_id_file):
+                with open(run_id_file, "w") as f:
+                    f.write(wandb.run.id)
+
+        if args.resume:
+            print("Resuming from previous state. Skipping EDA and Baseline generation.")
+            base_score = None
+            
+            # Determine task
+            df = pd.read_csv(dataset_path)
+            y = df[target_col].dropna()
+            task = 'classification' if y.nunique() < 20 else 'regression'
+        else:
+            # Phase 1: EDA
+            eda_path = perform_eda(dataset_path)
+
+            # Phase 2: Baseline
+            base_score, script_path, task = evaluate_baselines(
+                dataset_path=dataset_path, 
+                target_col=target_col,
+                test_path=test_path,
+                custom_metric=metric,
+                wandb_enabled=wandb_enabled,
+                wandb_project=wandb_project,
+                wandb_entity=wandb_entity
             )
-
-        # Phase 1: EDA
-        eda_path = perform_eda(dataset_path)
-
-        # Phase 2: Baseline
-        base_score, script_path, task = evaluate_baselines(
-            dataset_path=dataset_path, 
-            target_col=target_col,
-            test_path=test_path,
-            custom_metric=metric,
-            wandb_enabled=wandb_enabled,
-            wandb_project=wandb_project,
-            wandb_entity=wandb_entity
-        )
-        
-        # Initial commit to secure baseline state
-        git_mgr.commit_all(f"Initial Baseline Commit | CV Score: {base_score:.4f}")
-        if not had_commits:
-            git_mgr.ensure_dataset_branch_after_initial_commit(dataset_branch)
+            
+            # Initial commit to secure baseline state
+            git_mgr.commit_all(f"Initial Baseline Commit | CV Score: {base_score:.4f}")
+            if not had_commits:
+                git_mgr.ensure_dataset_branch_after_initial_commit(dataset_branch)
 
         # Phase 3: Agentic Loop
         run_agent_loop(

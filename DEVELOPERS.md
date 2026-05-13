@@ -10,6 +10,7 @@ The system consists of the following core components:
 2. **Baseline Engine**: Evaluates standard frameworks (XGBoost, LightGBM, CatBoost) using K-Fold Cross-Validation to establish a baseline model and starting script. For binary classification tasks, it automatically generates detailed out-of-fold metrics including Accuracy, F1 Score, Sensitivity, Specificity, and Positive/Negative case counts. For multi-class tasks, it provides Accuracy, Macro/Micro F1 Scores, and class distribution counts.
 3. **Agent Loop**: An orchestrator powered by `litellm` that feeds the dataset context, current code, and performance history to an LLM. The LLM edits the Python training script directly on the dataset branch to improve the cross-validation score. If an iteration succeeds, it is immediately committed. If an iteration fails (due to timeout or error), the broken code is retained uncommitted in the working directory so the next iteration can attempt to fix it.
 4. **Git Manager**: Ensures strict provenance. All dataset-specific work runs on a dedicated dataset branch. Successful iterations are directly committed and tracked.
+5. **Resume & Continuity**: The pipeline supports a `--resume` flag that bypasses the EDA and Baseline engines to prevent overwriting existing progress. It parses `history.json` to calculate the starting iteration and current best score, and reloads the Weights & Biases run ID from `wandb_run_id.txt` to ensure metrics plot on a continuous timeline.
 
 ## Git Branches and Provenance
 

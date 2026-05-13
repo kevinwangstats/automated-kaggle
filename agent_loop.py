@@ -66,12 +66,24 @@ def run_agent_loop(
         try:
             with open("history.json", "r") as f:
                 history = json.load(f)
+                
+            if base_score is None and history:
+                higher_is_better = (task == 'classification')
+                valid_scores = [run['score'] for run in history if run.get('score') is not None]
+                if valid_scores:
+                    current_best_score = max(valid_scores) if higher_is_better else min(valid_scores)
         except:
             pass
 
+    if current_best_score is None:
+        raise ValueError("base_score was None and could not be determined from history.")
+
     eda_content = read_file("EDA.md")
     
-    for i in range(1, max_iterations + 1):
+    start_iteration = len(history) + 1
+    end_iteration = start_iteration + max_iterations
+    
+    for i in range(start_iteration, end_iteration):
         log_stage(f"Iteration {i}")
         
         # We ensure we are on the dataset branch, but we DO NOT revert changes.

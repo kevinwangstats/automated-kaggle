@@ -74,14 +74,15 @@ python main.py
 
 ### Advanced Usage
 
-You can override the default config file path or skip the manual user confirmation prompt before each LLM API call:
+You can override the default config file path, skip user confirmation, or resume a previous run:
 
 ```bash
-python main.py --config custom_config.yaml -y
+python main.py --config custom_config.yaml -y --resume
 ```
 
 - `--config`: Path to a custom YAML configuration file (default: `config.yaml`).
 - `-y`: Skip the manual user confirmation prompt before each LLM API call.
+- `-r`, `--resume`: Resume an existing optimization session. This skips the EDA and Baseline generation phases, loading the previous best score and W&B run ID to continue iterating directly from your current best `train_model.py` script.
 
 ## Outputs and Tracking
 
