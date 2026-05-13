@@ -22,8 +22,11 @@ model: ollama/qwen3.5:2b
 # roc_auc is standard for binary classification
 metric: "roc_auc"
 
+# Titanic requires discrete class predictions (0 or 1), not probabilities
+pred_prob: false
+
 # Set to 0 to skip the LLM agent loop (baseline-only run)
-iterations: 5
+iterations: 10
 
 # Generous timeout for CI runners
 timeout: 60

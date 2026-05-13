@@ -56,6 +56,7 @@ def run_agent_loop(
     wandb_enabled: bool = False,
     wandb_project: str = None,
     wandb_entity: str = None,
+    pred_prob: bool = True
 ):
     log_stage("Starting Agentic Loop")
     current_best_score = base_score
@@ -106,6 +107,8 @@ def run_agent_loop(
                 # so the current_script is the new baseline.
                 history_context = f"\nPREVIOUS RUN IMPROVED SCORE TO {last_run.get('score')}. Good job, keep going!\n"
 
+        pred_prob_instruction = "Ensure that for the final `submission.csv`, you predict the PROBABILITIES for the positive class (e.g., using `predict_proba(test_X)[:, 1]`)." if pred_prob else "Ensure that for the final `submission.csv`, you predict the DISCRETE CLASSES (e.g., using `predict(test_X)`)."
+
         prompt = f"""You are an expert AI Data Scientist. Your goal is to improve the Cross-Validation score of the model.
 
 Dataset EDA Summary:
@@ -121,6 +124,7 @@ Current Best Score: {current_best_score}
 Please propose a modified version of the Python script to improve the model. 
 You can add feature engineering, handle missing values better, tune hyperparameters, or change the model architecture.
 Always ensure you output the FINAL_CV_SCORE in the same format: print(f"FINAL_CV_SCORE: {{final_score:.4f}}")
+{pred_prob_instruction}
 Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. Do not include other text.
 """
         

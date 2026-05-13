@@ -37,6 +37,11 @@ test_path: "data/test.csv"
 # Example: "log_loss", "f1", "neg_mean_absolute_error"
 metric: ~
 
+# Whether the final submission.csv should output probabilities (true) or discrete classes (false)
+# Default is true, which is common for Kaggle classification metrics like log_loss or roc_auc.
+# Set to false if the competition requires absolute class predictions (e.g. 0 or 1).
+pred_prob: true
+
 # The number of iterations the Agentic LLM should run to improve the model
 iterations: 5
 

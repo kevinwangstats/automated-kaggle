@@ -21,6 +21,7 @@ def main():
         target_col = config.get('target_col')
         test_path = config.get('test_path')
         metric = config.get('metric')
+        pred_prob = config.get('pred_prob', True)
         iterations = config.get('iterations', 5)
         timeout = config.get('timeout', 600)
         model = config.get('model', None)
