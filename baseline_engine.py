@@ -26,14 +26,7 @@ from lightgbm import LGBMRegressor, LGBMClassifier
 from catboost import CatBoostRegressor, CatBoostClassifier
 import h2o
 from h2o.sklearn import H2OAutoMLClassifier, H2OAutoMLRegressor
-from sklearn.base import ClassifierMixin, RegressorMixin
 import re
-
-class H2OClassifier(H2OAutoMLClassifier, ClassifierMixin):
-    _estimator_type = "classifier"
-
-class H2ORegressor(H2OAutoMLRegressor, RegressorMixin):
-    _estimator_type = "regressor"
 
 def train_and_evaluate():
     # 1. Load Data
@@ -71,6 +64,8 @@ def train_and_evaluate():
 
     # 3. Model Initialization (Multi-Model)
     try:
+        H2OAutoMLClassifier._estimator_type = "classifier"
+        H2OAutoMLRegressor._estimator_type = "regressor"
         h2o.init(verbose=False)
     except Exception:
         pass
@@ -83,7 +78,7 @@ def train_and_evaluate():
         except NameError: pass
         try: models.append(('cat', CatBoostClassifier(random_state=42, verbose=0)))
         except NameError: pass
-        try: models.append(('h2o', H2OClassifier(max_models=3, seed=42)))
+        try: models.append(('h2o', H2OAutoMLClassifier(max_models=3, seed=42)))
         except (NameError, Exception): pass
         
         if not models: raise RuntimeError("No models could be initialized.")
@@ -95,7 +90,7 @@ def train_and_evaluate():
         except NameError: pass
         try: models.append(('cat', CatBoostRegressor(random_state=42, verbose=0)))
         except NameError: pass
-        try: models.append(('h2o', H2ORegressor(max_models=3, seed=42)))
+        try: models.append(('h2o', H2OAutoMLRegressor(max_models=3, seed=42)))
         except (NameError, Exception): pass
         
         if not models: raise RuntimeError("No models could be initialized.")
@@ -206,11 +201,10 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
             try:
                 import h2o
                 from h2o.sklearn import H2OAutoMLClassifier, H2OAutoMLRegressor
-                from sklearn.base import ClassifierMixin, RegressorMixin
+                H2OAutoMLClassifier._estimator_type = "classifier"
+                H2OAutoMLRegressor._estimator_type = "regressor"
                 h2o.init(verbose=False)
-                class H2OClf(H2OAutoMLClassifier, ClassifierMixin): _estimator_type = "classifier"
-                class H2OReg(H2OAutoMLRegressor, RegressorMixin): _estimator_type = "regressor"
-                h2o_model = H2OClf(max_models=3, seed=42) if task == 'classification' else H2OReg(max_models=3, seed=42)
+                h2o_model = H2OAutoMLClassifier(max_models=3, seed=42) if task == 'classification' else H2OAutoMLRegressor(max_models=3, seed=42)
                 models_to_eval['h2o'] = h2o_model
             except Exception: pass
 
