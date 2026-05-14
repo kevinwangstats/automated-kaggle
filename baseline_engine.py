@@ -8,8 +8,6 @@ import os
 import re
 
 def create_template_script(dataset_path: str, target_col: str, best_model_name: str, test_path: str = None, custom_metric: str = None) -> str:
-    # This function now generates a script that uses a robust scikit-learn Pipeline.
-    # It solves data leakage and brittle-preprocessing issues.
     
     metric_str = f"'{custom_metric}'" if custom_metric else "('roc_auc' if task == 'classification' else 'neg_mean_squared_error')"
 
@@ -24,8 +22,6 @@ from sklearn.ensemble import VotingClassifier, VotingRegressor
 from xgboost import XGBRegressor, XGBClassifier
 from lightgbm import LGBMRegressor, LGBMClassifier
 from catboost import CatBoostRegressor, CatBoostClassifier
-import h2o
-from h2o.sklearn import H2OAutoMLClassifier, H2OAutoMLRegressor
 import re
 
 def train_and_evaluate():
@@ -62,14 +58,7 @@ def train_and_evaluate():
         remainder='passthrough'
     )
 
-    # 3. Model Initialization (Multi-Model)
-    try:
-        H2OAutoMLClassifier._estimator_type = "classifier"
-        H2OAutoMLRegressor._estimator_type = "regressor"
-        h2o.init(verbose=False)
-    except Exception:
-        pass
-    
+    # 3. Model Initialization (Multi-Model Ensemble)
     models = []
     if task == 'classification':
         try: models.append(('xgb', XGBClassifier(random_state=42)))
@@ -78,8 +67,6 @@ def train_and_evaluate():
         except NameError: pass
         try: models.append(('cat', CatBoostClassifier(random_state=42, verbose=0)))
         except NameError: pass
-        try: models.append(('h2o', H2OAutoMLClassifier(max_models=3, seed=42)))
-        except (NameError, Exception): pass
         
         if not models: raise RuntimeError("No models could be initialized.")
         ensemble = VotingClassifier(estimators=models, voting='soft')
@@ -90,8 +77,6 @@ def train_and_evaluate():
         except NameError: pass
         try: models.append(('cat', CatBoostRegressor(random_state=42, verbose=0)))
         except NameError: pass
-        try: models.append(('h2o', H2OAutoMLRegressor(max_models=3, seed=42)))
-        except (NameError, Exception): pass
         
         if not models: raise RuntimeError("No models could be initialized.")
         ensemble = VotingRegressor(estimators=models)
@@ -104,7 +89,7 @@ def train_and_evaluate():
     cv = KFold(n_splits=5, shuffle=True, random_state=42)
     scoring = {metric_str}
     
-    # Using n_jobs=1 because H2O and CatBoost have internal parallelism
+    # n_jobs=1 because CatBoost/LightGBM have robust internal parallelism
     scores = cross_val_score(pipeline, X, y, cv=cv, scoring=scoring, n_jobs=1)
     
     final_score = np.mean(scores)
@@ -198,6 +183,8 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
                 from catboost import CatBoostRegressor, CatBoostClassifier
                 models_to_eval['cat'] = CatBoostClassifier(random_state=42, verbose=0) if task == 'classification' else CatBoostRegressor(random_state=42, verbose=0)
             except Exception: pass
+
+            # H2O is kept here for evaluation, but omitted from the generated ensemble script
             try:
                 import h2o
                 from h2o.sklearn import H2OAutoMLClassifier, H2OAutoMLRegressor
