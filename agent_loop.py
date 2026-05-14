@@ -128,6 +128,14 @@ def run_agent_loop(
 
         prompt = f"""You are an expert AI Data Scientist. Your goal is to improve the Cross-Validation score of the model.
 
+You have access to the following machine learning frameworks:
+- XGBoost (`XGBClassifier`, `XGBRegressor`)
+- LightGBM (`LGBMClassifier`, `LGBMRegressor`)
+- CatBoost (`CatBoostClassifier`, `CatBoostRegressor`)
+- H2O AutoML (`H2OAutoMLClassifier`, `H2OAutoMLRegressor`)
+
+You should try tuning hyperparameters for these models, comparing their individual performance, or ensembling them (e.g., using `VotingClassifier`/`VotingRegressor` or `StackingClassifier`/`StackingRegressor`) to maximize the cross-validation score.
+
 Dataset EDA Summary:
 {eda_content}
 

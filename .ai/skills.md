@@ -5,7 +5,7 @@ This file contains knowledge and skills specific to how this project operates. A
 ## 1. How the Agentic Loop Works
 - The entry point is `main.py`.
 - It triggers `eda_engine.py` to generate `EDA.md`.
-- `baseline_engine.py` runs basic models (XGBoost, LightGBM, CatBoost, H2O AutoML) via K-Fold CV, determines the best performer, and writes the *initial* `train_model.py` template.
+- `baseline_engine.py` runs basic models (XGBoost, LightGBM, CatBoost, H2O AutoML) via K-Fold CV to establish initial performance, and then writes a `train_model.py` template that initializes and ensembles all four frameworks for the agent to optimize.
 - `agent_loop.py` takes control. It reads `EDA.md` and the current `train_model.py`.
 - The agent loop calls `litellm` via `gemini/gemini-1.5-pro` (or the configured environment variable) to rewrite `train_model.py`.
 - The new script is executed in an isolated `subprocess.run` with a strict timeout.

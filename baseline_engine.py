@@ -5,35 +5,18 @@ from sklearn.preprocessing import LabelEncoder
 from logger import log_stage, log_metric, log_error, suppress_stdout_stderr
 import os
 
-def create_template_script(dataset_path: str, target_col: str, model_type: str, test_path: str = None, custom_metric: str = None) -> str:
-    imports = ""
-    model_init = ""
-    
-    if model_type == "xgb":
-        imports = "from xgboost import XGBRegressor, XGBClassifier"
-        model_init = f"model = XGBClassifier(random_state=42) if task == 'classification' else XGBRegressor(random_state=42)"
-    elif model_type == "lgb":
-        imports = "from lightgbm import LGBMRegressor, LGBMClassifier"
-        model_init = f"model = LGBMClassifier(random_state=42) if task == 'classification' else LGBMRegressor(random_state=42)"
-    elif model_type == "cat":
-        imports = "from catboost import CatBoostRegressor, CatBoostClassifier"
-        model_init = f"model = CatBoostClassifier(random_state=42, verbose=0) if task == 'classification' else CatBoostRegressor(random_state=42, verbose=0)"
-    elif model_type == "h2o":
-        imports = "import h2o\nfrom h2o.sklearn import H2OAutoMLClassifier, H2OAutoMLRegressor"
-        model_init = "h2o.init(verbose=False)\n    model = H2OAutoMLClassifier(max_models=3, seed=42) if task == 'classification' else H2OAutoMLRegressor(max_models=3, seed=42)"
-    
-    
+def create_template_script(dataset_path: str, target_col: str, best_model_name: str, test_path: str = None, custom_metric: str = None) -> str:
     # Custom metric handling
     metric_str = f"'{custom_metric}'" if custom_metric else "('roc_auc' if task == 'classification' else 'neg_mean_squared_error')"
     
     inference_block = ""
     if test_path:
-        pred_line = "preds = model.predict_proba(test_X)[:, 1] if task == 'classification' else model.predict(test_X)"
+        pred_line = "preds = ensemble.predict_proba(test_X)[:, 1] if task == 'classification' else ensemble.predict(test_X)"
         
         inference_block = f'''
     # 4. Generate Submission
     print("Generating submission...")
-    model.fit(X, y)
+    ensemble.fit(X, y)
     test_df = pd.read_csv("{test_path}")
     # Simple preprocessing matching train
     test_X = test_df.copy()
@@ -51,7 +34,6 @@ def create_template_script(dataset_path: str, target_col: str, model_type: str, 
     {pred_line}
         
     submission = pd.DataFrame()
-    # Assuming first column of test is ID, or just outputting raw preds
     if len(test_df.columns) > 0:
         submission[test_df.columns[0]] = test_df.iloc[:, 0]
     submission['{target_col}'] = preds
@@ -64,7 +46,12 @@ import numpy as np
 from sklearn.model_selection import KFold, cross_val_score
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import make_scorer, roc_auc_score, mean_squared_error
-{imports}
+from sklearn.ensemble import VotingClassifier, VotingRegressor
+from xgboost import XGBRegressor, XGBClassifier
+from lightgbm import LGBMRegressor, LGBMClassifier
+from catboost import CatBoostRegressor, CatBoostClassifier
+import h2o
+from h2o.sklearn import H2OAutoMLClassifier, H2OAutoMLRegressor
 import re
 
 def train_and_evaluate():
@@ -74,13 +61,11 @@ def train_and_evaluate():
     
     # Basic Preprocessing
     df = df.dropna(subset=[target_col])
-    
     y = df[target_col]
     X = df.drop(columns=[target_col])
     
     X.columns = [re.sub(r'[^\\w\\s]', '', col).replace(' ', '_') for col in X.columns]
     
-    # Handle categoricals
     for col in X.select_dtypes(include=['object', 'category']).columns:
         X[col] = X[col].astype(str)
         le = LabelEncoder()
@@ -91,19 +76,31 @@ def train_and_evaluate():
         le_y = LabelEncoder()
         y = le_y.fit_transform(y)
     
-    # 2. Model Initialization
-    {model_init}
+    # 2. Model Initialization (Multi-Model)
+    h2o.init(verbose=False)
+    
+    models = []
+    if task == 'classification':
+        models.append(('xgb', XGBClassifier(random_state=42)))
+        models.append(('lgb', LGBMClassifier(random_state=42, verbose=-1)))
+        models.append(('cat', CatBoostClassifier(random_state=42, verbose=0)))
+        models.append(('h2o', H2OAutoMLClassifier(max_models=3, seed=42)))
+        ensemble = VotingClassifier(estimators=models, voting='soft')
+    else:
+        models.append(('xgb', XGBRegressor(random_state=42)))
+        models.append(('lgb', LGBMRegressor(random_state=42, verbose=-1)))
+        models.append(('cat', CatBoostRegressor(random_state=42, verbose=0)))
+        models.append(('h2o', H2OAutoMLRegressor(max_models=3, seed=42)))
+        ensemble = VotingRegressor(estimators=models)
     
     # 3. Cross Validation
     cv = KFold(n_splits=5, shuffle=True, random_state=42)
     scoring = {metric_str}
     
-    n_jobs = 1 if "{model_type}" == "h2o" else -1
-    scores = cross_val_score(model, X, y, cv=cv, scoring=scoring, n_jobs=n_jobs)
+    # Using n_jobs=1 because H2O and CatBoost have internal parallelism
+    scores = cross_val_score(ensemble, X, y, cv=cv, scoring=scoring, n_jobs=1)
     
     final_score = np.mean(scores)
-    # We output raw sklearn score so agent loop can always assume higher is better
-        
     print(f"FINAL_CV_SCORE: {{final_score:.4f}}")
     {inference_block}
     return final_score
