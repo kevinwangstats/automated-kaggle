@@ -54,7 +54,10 @@ def train_and_evaluate():
         y = y_raw
 
     # 2. Define Preprocessing Pipeline
-    categorical_features = X.select_dtypes(include=['object', 'category', 'str']).columns
+    try:
+        categorical_features = X.select_dtypes(include=['object', 'category', 'str']).columns
+    except TypeError:
+        categorical_features = X.select_dtypes(include=['object', 'category']).columns
     numerical_features = X.select_dtypes(include=np.number).columns
 
     preprocessor = ColumnTransformer(
@@ -162,7 +165,10 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
             y = y_raw
 
         # Define the same preprocessor that will be used in the generated script
-        categorical_features = X.select_dtypes(include=['object', 'category', 'str']).columns
+        try:
+            categorical_features = X.select_dtypes(include=['object', 'category', 'str']).columns
+        except TypeError:
+            categorical_features = X.select_dtypes(include=['object', 'category']).columns
         numerical_features = X.select_dtypes(include=np.number).columns
         
         preprocessor = ColumnTransformer(
