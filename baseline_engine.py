@@ -18,6 +18,9 @@ def create_template_script(dataset_path: str, target_col: str, model_type: str, 
     elif model_type == "cat":
         imports = "from catboost import CatBoostRegressor, CatBoostClassifier"
         model_init = f"model = CatBoostClassifier(random_state=42, verbose=0) if task == 'classification' else CatBoostRegressor(random_state=42, verbose=0)"
+    elif model_type == "h2o":
+        imports = "import h2o\nfrom h2o.sklearn import H2OAutoMLClassifier, H2OAutoMLRegressor"
+        model_init = "h2o.init(verbose=False)\n    model = H2OAutoMLClassifier(max_models=3, seed=42) if task == 'classification' else H2OAutoMLRegressor(max_models=3, seed=42)"
     
     
     # Custom metric handling
@@ -95,7 +98,8 @@ def train_and_evaluate():
     cv = KFold(n_splits=5, shuffle=True, random_state=42)
     scoring = {metric_str}
     
-    scores = cross_val_score(model, X, y, cv=cv, scoring=scoring, n_jobs=-1)
+    n_jobs = 1 if "{model_type}" == "h2o" else -1
+    scores = cross_val_score(model, X, y, cv=cv, scoring=scoring, n_jobs=n_jobs)
     
     final_score = np.mean(scores)
     # We output raw sklearn score so agent loop can always assume higher is better
@@ -157,16 +161,24 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
                 models_to_eval['cat'] = CatBoostClassifier(random_state=42, verbose=0) if task == 'classification' else CatBoostRegressor(random_state=42, verbose=0)
             except Exception: pass
 
+            try:
+                import h2o
+                from h2o.sklearn import H2OAutoMLClassifier, H2OAutoMLRegressor
+                h2o.init(verbose=False)
+                models_to_eval['h2o'] = H2OAutoMLClassifier(max_models=3, seed=42) if task == 'classification' else H2OAutoMLRegressor(max_models=3, seed=42)
+            except Exception: pass
+
             for m_name, model in models_to_eval.items():
                 try:
-                    scores = cross_val_score(model, X, y, cv=cv, scoring=scoring, n_jobs=-1)
+                    n_jobs = 1 if m_name == 'h2o' else -1
+                    scores = cross_val_score(model, X, y, cv=cv, scoring=scoring, n_jobs=n_jobs)
                     results[m_name] = np.mean(scores)
                     
                     if task == 'classification':
                         from sklearn.model_selection import cross_val_predict
                         from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
                         
-                        preds = cross_val_predict(model, X, y, cv=cv, n_jobs=-1)
+                        preds = cross_val_predict(model, X, y, cv=cv, n_jobs=n_jobs)
                         acc = accuracy_score(y, preds)
                         
                         report = f"--- {m_name.upper()} ---\n"

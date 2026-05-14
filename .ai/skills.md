@@ -5,7 +5,7 @@ This file contains knowledge and skills specific to how this project operates. A
 ## 1. How the Agentic Loop Works
 - The entry point is `main.py`.
 - It triggers `eda_engine.py` to generate `EDA.md`.
-- `baseline_engine.py` runs basic models (XGBoost, LightGBM, CatBoost) via K-Fold CV, determines the best performer, and writes the *initial* `train_model.py` template.
+- `baseline_engine.py` runs basic models (XGBoost, LightGBM, CatBoost, H2O AutoML) via K-Fold CV, determines the best performer, and writes the *initial* `train_model.py` template.
 - `agent_loop.py` takes control. It reads `EDA.md` and the current `train_model.py`.
 - The agent loop calls `litellm` via `gemini/gemini-1.5-pro` (or the configured environment variable) to rewrite `train_model.py`.
 - The new script is executed in an isolated `subprocess.run` with a strict timeout.
@@ -28,7 +28,7 @@ This file contains knowledge and skills specific to how this project operates. A
 - The `-y` flag skips per-LLM-call confirmation prompts.
 
 ## 5. Baseline Metrics Reporting
-- For binary classification tasks, `baseline_engine.py` runs `cross_val_predict` in addition to `cross_val_score` for all three models (XGBoost, LightGBM, CatBoost).
+- For binary classification tasks, `baseline_engine.py` runs `cross_val_predict` in addition to `cross_val_score` for all four models (XGBoost, LightGBM, CatBoost, H2O AutoML).
 - It computes a Confusion Matrix and derives Accuracy, F1 Score, Sensitivity, and Specificity.
 - These reports are printed directly to standard output *outside* the `suppress_stdout_stderr()` block, ensuring they appear in both local and GitHub Actions logs.
 - LightGBM models must always be initialized with `verbose=-1` to suppress C++ backend warnings at the source.
