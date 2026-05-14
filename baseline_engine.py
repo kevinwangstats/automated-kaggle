@@ -4,6 +4,7 @@ from sklearn.model_selection import KFold, cross_val_score
 from sklearn.preprocessing import LabelEncoder
 from logger import log_stage, log_metric, log_error, suppress_stdout_stderr
 import os
+import re
 
 def create_template_script(dataset_path: str, target_col: str, best_model_name: str, test_path: str = None, custom_metric: str = None) -> str:
     # This function now generates a script that uses a robust scikit-learn Pipeline.
