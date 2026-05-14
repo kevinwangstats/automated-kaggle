@@ -37,5 +37,5 @@ model: gemini/gemini-2.5-flash-lite
 
 # Weights & Biases configuration
 wandb:
-  enabled: true
+  enabled: false
   entity: "kevinwangstats"

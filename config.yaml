@@ -57,6 +57,6 @@ timeout: 600
 # wandb: Weights & Biases configuration for tracking experiments and metrics.
 wandb:
   # enabled: Whether to log results to wandb.
-  enabled: false
+  enabled: true
   # entity: Your W&B username or team name.
   entity: "kevinwangstats"
