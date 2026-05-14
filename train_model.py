@@ -140,23 +140,9 @@ def train_and_evaluate():
     # for the categorical features, but it's good practice for numerical features if they were missing.
     # For this specific dataset and preprocessing, it's less likely to be an issue.
 
-    # Predict on the test data
-    import yaml
-    import os
-    pred_prob = True
-    config_path = "config.yaml"
-    if "titanic" in "data/titanic/train.csv" and os.path.exists("tests/titanic_config.yaml"):
-        config_path = "tests/titanic_config.yaml"
-        
-    try:
-        with open(config_path, "r") as f:
-            config_data = yaml.safe_load(f)
-            if config_data and "pred_prob" in config_data:
-                pred_prob = config_data["pred_prob"]
-    except Exception:
-        pass
-        
-    if pred_prob:
+    # Predict on the test data. We ALWAYS output probabilities to raw_submission.csv.
+    # The formatting into submission.csv (classes vs probs) is handled by kaggle_submit.py.
+    if hasattr(pipeline, "predict_proba"):
         preds = pipeline.predict_proba(test_X)[:, 1]
     else:
         preds = pipeline.predict(test_X)
@@ -165,8 +151,25 @@ def train_and_evaluate():
     # Assuming first column of test is ID
     submission[test_df.columns[0]] = test_df.iloc[:, 0]
     submission['Survived'] = preds
-    submission.to_csv("submission.csv", index=False)
-    print("Saved submission.csv")
+    submission.to_csv("raw_submission.csv", index=False)
+    print("Saved raw_submission.csv")
+    
+    # Automatically format submission using the separate kaggle_submit.py script
+    import subprocess
+    import yaml
+    import os
+    cfg = "tests/titanic_config.yaml" if "titanic" in "data/titanic/train.csv" and os.path.exists("tests/titanic_config.yaml") else "config.yaml"
+    auto_submit = False
+    if os.path.exists(cfg):
+        try:
+            with open(cfg, "r") as f:
+                cfg_data = yaml.safe_load(f)
+                auto_submit = cfg_data.get("auto_kaggle_submit", False)
+        except Exception:
+            pass
+    if auto_submit:
+        print("Formatting submission for Kaggle...")
+        subprocess.run(["python", "kaggle_submit.py", "--config", cfg])
 
     return final_score
 

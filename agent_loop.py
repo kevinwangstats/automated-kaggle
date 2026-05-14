@@ -18,7 +18,7 @@ def read_file(filepath: str) -> str:
     with open(filepath, 'r') as f:
         return f.read()
 
-def run_training_script(script_path="train_model.py", timeout: int = 600):
+def run_training_script(script_path="train_model.py", timeout: int = 600, config_path="config.yaml"):
     # Run the script as a subprocess to capture its FINAL_CV_SCORE output safely
     # and prevent crashes in the orchestrator if the generated code is bad.
     try:
@@ -33,6 +33,21 @@ def run_training_script(script_path="train_model.py", timeout: int = 600):
     
     if result.returncode != 0:
         raise RuntimeError(f"Script Execution Failed:\n{result.stderr}")
+        
+    # Attempt to format submission if it exists, only if auto_kaggle_submit is true
+    import yaml
+    import os
+    auto_submit = False
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r") as f:
+                cfg = yaml.safe_load(f)
+                auto_submit = cfg.get("auto_kaggle_submit", False)
+        except Exception:
+            pass
+            
+    if auto_submit:
+        subprocess.run(["python", "kaggle_submit.py", "--config", config_path], capture_output=True)
         
     # Parse final score
     match = re.search(r'FINAL_CV_SCORE: ([\d\.]+)', result.stdout)
@@ -107,7 +122,7 @@ def run_agent_loop(
                 # so the current_script is the new baseline.
                 history_context = f"\nPREVIOUS RUN IMPROVED SCORE TO {last_run.get('score')}. Good job, keep going!\n"
 
-        pred_prob_instruction = "Ensure that for the final `submission.csv`, you predict the PROBABILITIES for the positive class (e.g., using `predict_proba(test_X)[:, 1]`)." if pred_prob else "Ensure that for the final `submission.csv`, you predict the DISCRETE CLASSES (e.g., using `predict(test_X)`)."
+        pred_prob_instruction = "Ensure that for the final `raw_submission.csv`, you predict the continuous PROBABILITIES for the positive class (e.g., using `predict_proba(test_X)[:, 1]`). Another script will handle formatting it for Kaggle into `submission.csv`."
 
         prompt = f"""You are an expert AI Data Scientist. Your goal is to improve the Cross-Validation score of the model.
 
@@ -187,7 +202,7 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. D
             
         try:
             log_stage(f"Evaluating Generated Code")
-            new_score = run_training_script("train_model.py", timeout=timeout)
+            new_score = run_training_script("train_model.py", timeout=timeout, config_path=config_path)
             log_metric("Iteration Score", new_score)
             
             higher_is_better = (task == 'classification')
@@ -253,4 +268,6 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. D
             json.dump(history, f, indent=2)
 
     log_stage("Agentic Loop Finished")
+    log_metric("Final Best Score", current_best_score)
+gentic Loop Finished")
     log_metric("Final Best Score", current_best_score)
