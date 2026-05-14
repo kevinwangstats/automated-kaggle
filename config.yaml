@@ -42,6 +42,15 @@ metric: ~
 # Set to false if the competition requires absolute class predictions (e.g. 0 or 1).
 pred_prob: true
 
+# The path to an example submission file provided by Kaggle (optional)
+# The pipeline can inspect this file to automatically determine if the competition
+# requires probabilities or discrete classes, overriding pred_prob.
+example_submission: ~
+
+# Automatically submit the final submission.csv to Kaggle when all iterations are complete
+# Requires the Kaggle CLI to be installed and authenticated (~/.kaggle/kaggle.json)
+auto_kaggle_submit: false
+
 # The number of iterations the Agentic LLM should run to improve the model
 iterations: 5
 

@@ -147,8 +147,14 @@ def main():
             ollama_base_url=ollama_base_url,
             wandb_enabled=wandb_enabled,
             wandb_project=wandb_project,
-            wandb_entity=wandb_entity
+            wandb_entity=wandb_entity,
+            pred_prob=pred_prob,
+            config_path=args.config
         )
+        
+        # Phase 4: Automated Kaggle Submission
+        import kaggle_submit
+        kaggle_submit.submit_to_kaggle(args.config)
         
         if wandb_enabled:
             wandb.finish()
