@@ -2,7 +2,7 @@ import argparse
 import yaml
 from eda_engine import perform_eda
 from baseline_engine import evaluate_baselines
-from agent_loop import run_agent_loop
+from agent_loop import run_agent_loop, run_training_script
 from git_manager import GitManager, dataset_branch_from_dataset_path
 from logger import log_stage, log_error
 
@@ -152,6 +152,14 @@ def main():
             config_path=args.config
         )
         
+        # Ensure we have a raw_submission.csv if we have a test_path
+        if test_path and not os.path.exists("raw_submission.csv"):
+            log_stage("Generating Baseline Submission")
+            try:
+                run_training_script(timeout=timeout, config_path=args.config)
+            except Exception as e:
+                log_error("Failed to generate baseline submission", e)
+
         # Phase 4: Automated Kaggle Submission
         import kaggle_submit
         log_stage("Final Kaggle Submission")
