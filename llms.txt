@@ -1,0 +1,53 @@
+# Agentic AutoML Tabular Pipeline Rules
+
+You are working in a Python-based template repository designed for autonomous, agentic modeling on Kaggle Tabular data challenges. This project uses `litellm` combined with pure Python orchestration and Git-based strict code provenance.
+
+Before proposing code edits, you MUST read and strictly adhere to the instructions found in this document.
+
+## 1. Architectural Constraints
+- **Lightweight Frameworks Only**: Do NOT introduce heavy multi-agent frameworks like LangChain, LangGraph, AutoGen, or CrewAI. This repository relies strictly on pure Python orchestration (`main.py`, `agent_loop.py`) interacting with `litellm`.
+- **Ephemeral Files**: The file `train_model.py` is an ephemeral file generated and overwritten continuously by the pipeline. Do not manually edit it unless you are actively debugging a syntax error for the user.
+- **Git Provenance**: The pipeline manages Git branches. `main` should carry shared backbone (orchestration, engines, generic defaults). The active `dataset_path` in `config.yaml` selects a **dataset branch** (e.g., `data/titanic/train.csv` → branch `titanic`). Each agent iteration uses a short-lived `experiment/iter_*` branch created from that dataset branch; successful runs merge into the dataset branch, failed runs discard the experiment branch. Do not bypass the git_manager.
+
+## 2. How the Agentic Loop Works
+- The entry point is `main.py`.
+- It triggers `eda_engine.py` to generate `EDA.md`.
+- `baseline_engine.py` runs basic models (XGBoost, LightGBM, CatBoost, H2O AutoML) via K-Fold CV to establish initial performance.
+- Crucially, `baseline_engine.py` then writes a `train_model.py` template that ensembles XGBoost, LightGBM, and CatBoost (omitting H2O due to ensemble compatibility issues) using a scikit-learn `Pipeline`.
+- `agent_loop.py` takes control. It reads `EDA.md` and the current `train_model.py`.
+- The agent loop calls `litellm` to rewrite `train_model.py` to optimize the pipeline.
+- The new script is executed in an isolated `subprocess.run` with a strict timeout.
+- If the script fails, the `RuntimeError` or `TimeoutExpired` is captured and fed *back* into the next iteration's prompt.
+- If the CV score improves, the git branch is merged.
+
+## 3. Preprocessing and Submission Generation
+- The modeling pipeline heavily relies on scikit-learn `Pipeline` and `ColumnTransformer` architectures to prevent data leakage and handle unseen categories safely (using `OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1)` or robust OneHotEncoding).
+- Kaggle test datasets do not contain target labels. When `test_path` is set in `config.yaml`, the generated script appends a submission block. 
+- Because the `Pipeline` handles all preprocessing, the script simply passes the raw `test_df` directly into `pipeline.predict()` or `pipeline.predict_proba()`.
+- The LLM must maintain this `Pipeline` architecture and submission logic if it rewrites the script.
+
+## 4. Modeling & Metric Constraints
+- All pipeline inputs are configured via `config.yaml`, not argparse. Always refer to `config.yaml` to understand the active dataset paths and metric settings.
+- The pipeline delegates metric scoring to standard `scikit-learn` metrics.
+- Scikit-learn normalizes regression metrics to be "negative" (e.g., `neg_mean_squared_error`). Therefore, mathematically, a *higher* score is always better (closer to 0).
+- The `agent_loop.py` explicitly relies on this fact: `higher_is_better` is generally treated as `True` for raw sklearn scores.
+- When adding features, prioritize standard scikit-learn compatible wrappers.
+
+## 5. Formatting, Tracking & Logging Strict Rules
+- **`CHANGELOG.md`**: Must only contain successful iterations. It must follow a markdown bullet format: `- **Iter <N>**: Score <score> (Commit: <id>)`. Do not bloat this file with verbose logging.
+- **`history.json`**: Tracks all iterations (both successful and failed). It strictly follows an array of objects with schema: `{"iteration": int, "commit": str, "score": float, "improved": bool, "prompt": str, "response": str, "error": str}`. If editing logic related to this, you must preserve these keys.
+- **DO NOT use standard `print()`** statements for debugging standard execution paths. Use the custom `logger.py` (`log_stage`, `log_error`, `log_metric`).
+- **Exception 1**: The `FINAL_CV_SCORE` must be output using exactly `print(f"FINAL_CV_SCORE: {final_score:.4f}")` as the orchestrator parses standard output using regex to capture this exact string.
+- **Exception 2**: For binary classification tasks, `baseline_engine.py` runs `cross_val_predict` to compute a Confusion Matrix and derives Accuracy, F1 Score, Sensitivity, and Specificity. These reports are intentionally printed via `print()` *outside* the `suppress_stdout_stderr()` block to ensure visibility in GitHub Actions logs.
+- LightGBM models must always be initialized with `verbose=-1` to suppress C++ backend warnings.
+
+## 6. Configuration & Environment Variables
+- All pipeline inputs (`dataset_path`, `target_col`, `test_path`, `metric`, `iterations`, `timeout`) are defined in `config.yaml`.
+- `main.py` accepts a single `--config` argument pointing to a YAML file (default: `config.yaml`).
+- The `-y` flag skips per-LLM-call confirmation prompts.
+- `AUTOML_MODEL`: Determines the Litellm routing model.
+- Standard API keys (e.g., `GEMINI_API_KEY`, `OPENAI_API_KEY`) must be present in the shell environment.
+
+## 7. CI/CD Pipeline
+- `.github/workflows/titanic_ci.yml` is a GitHub Actions workflow that triggers on every push/PR to `main`.
+- It tests the EDA and Baseline engines using `iterations: 0` without triggering any LLM calls.
