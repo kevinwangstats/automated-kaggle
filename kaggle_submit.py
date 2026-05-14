@@ -47,23 +47,14 @@ def format_submission(config_path="config.yaml"):
     raw_sub = pd.read_csv(raw_sub_path)
     
     example_sub_path = config.get("example_submission", None)
+    # The pred_prob setting from config is our source of truth.
+    # raw_submission.csv is expected to always contain probabilities for classification.
     pred_prob = config.get("pred_prob", True)
 
     if example_sub_path and os.path.exists(example_sub_path):
-        print(f"[kaggle_submit] Reading example submission from {example_sub_path}")
-        example_sub = pd.read_csv(example_sub_path, nrows=10)
-        if len(example_sub.columns) > 1:
-            target_col = example_sub.columns[1]
-            dtype = example_sub[target_col].dtype
-            
-            if pd.api.types.is_float_dtype(dtype):
-                print("[kaggle_submit] Example submission uses floats. Outputting probabilities.")
-                pred_prob = True
-            elif pd.api.types.is_integer_dtype(dtype) or pd.api.types.is_object_dtype(dtype) or pd.api.types.is_string_dtype(dtype):
-                print("[kaggle_submit] Example submission uses integers/strings. Outputting discrete classes.")
-                pred_prob = False
+        print(f"[kaggle_submit] Reading example submission from {example_sub_path} for column names.")
     else:
-        print(f"[kaggle_submit] No example submission found. Using config pred_prob: {pred_prob}")
+        print(f"[kaggle_submit] Using config pred_prob: {pred_prob}")
 
     final_sub = raw_sub.copy()
     

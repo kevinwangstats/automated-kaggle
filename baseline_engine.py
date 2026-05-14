@@ -5,7 +5,7 @@ from sklearn.preprocessing import LabelEncoder
 from logger import log_stage, log_metric, log_error, suppress_stdout_stderr
 import os
 
-def create_template_script(dataset_path: str, target_col: str, model_type: str, test_path: str = None, custom_metric: str = None, pred_prob: bool = True) -> str:
+def create_template_script(dataset_path: str, target_col: str, model_type: str, test_path: str = None, custom_metric: str = None) -> str:
     imports = ""
     model_init = ""
     
@@ -25,7 +25,7 @@ def create_template_script(dataset_path: str, target_col: str, model_type: str, 
     
     inference_block = ""
     if test_path:
-        pred_line = "preds = model.predict_proba(test_X)[:, 1] if task == 'classification' else model.predict(test_X)" if pred_prob else "preds = model.predict(test_X)\n    if task == 'classification':\n        preds = le_y.inverse_transform(preds)"
+        pred_line = "preds = model.predict_proba(test_X)[:, 1] if task == 'classification' else model.predict(test_X)"
         
         inference_block = f'''
     # 4. Generate Submission

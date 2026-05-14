@@ -34,6 +34,7 @@ timeout: 60
 
 # model: ollama/qwen3.5:2b
 model: gemini/gemini-2.5-flash-lite
+auto_kaggle_submit: true
 
 # Weights & Biases configuration
 wandb:

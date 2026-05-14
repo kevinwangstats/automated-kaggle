@@ -33,7 +33,8 @@ metric: ~
 
 # pred_prob: Boolean indicating if the final Kaggle submission should be probabilities (true) 
 # or discrete class labels (false). Default: true.
-# Note: If example_submission is provided, it may override this setting.
+# raw_submission.csv ALWAYS contains probabilities for classification;
+# this flag determines if kaggle_submit.py converts them to classes.
 pred_prob: true
 
 # example_submission: Path to a Kaggle-provided sample submission file.
