@@ -36,7 +36,7 @@ jobs:
 
     - name: Run Baseline Engine
       run: |
-        python main.py --config tests/titanic_config.yaml -y
+        python main.py --config .github/workflows/titanic_ci_config.yaml -y
 
     - name: Verify Submission File
       run: |
