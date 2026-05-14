@@ -2,63 +2,61 @@
 # Agentic AutoML Pipeline Configuration
 # ---------------------------------------------------------
 
-# The path to the training dataset CSV file (required).
-# Branch naming: paths like data/<name>/... use Git branch <name> for experiments (main stays backbone-only).
+# dataset_path: The relative path to the training dataset CSV file.
+# This parameter is REQUIRED.
+# It also determines the Git branch name used for experiments. 
+# For example, "data/titanic/train.csv" will use a branch named "titanic".
 dataset_path: "data/train.csv"
 
-# The exact name of the target column you want to predict (required)
+# target_col: The exact name of the target/label column in your dataset.
+# This parameter is REQUIRED.
 target_col: "target"
 
-# LLM model to use for the agentic loop (optional)
-# Overrides the AUTOML_MODEL environment variable if set.
+# model: The LLM model to use for generating code improvements.
 # Uses litellm routing format: "provider/model-name"
-# Default: gemini/gemini-2.0-flash
-# Examples:
-#   Gemini:     gemini/gemini-2.0-flash
-#   OpenAI:     openai/gpt-4o
-#   Anthropic:  anthropic/claude-3-5-sonnet-20241022
-#   Ollama:     ollama/llama3.2   (requires Ollama running locally)
+# Examples: "gemini/gemini-2.0-flash", "openai/gpt-4o", "ollama/qwen2.5:7b"
+# If not set, it defaults to the AUTOML_MODEL environment variable or gemini-2.0-flash.
 model: ollama/qwen3.5:2b
 
-# Ollama base URL (optional, only needed if using an ollama/* model)
-# Default: http://localhost:11434
-# Change this if Ollama is running on a different host or port.
+# ollama_base_url: The URL where your local Ollama instance is running.
+# Only needed if using an "ollama/*" model. Default: http://localhost:11434
 ollama_base_url: ~
 
-# The path to the testing dataset CSV file (optional)
-# If provided, the pipeline will automatically generate a submission.csv
-# using the final model trained on the full train dataset.
+# test_path: The relative path to the testing dataset CSV file.
+# If provided, the generated model scripts should use this to create "raw_submission.csv".
 test_path: "data/test.csv"
 
-# Custom evaluation metric for Cross Validation (optional)
-# If left blank (null or ~), it defaults to:
-# - 'roc_auc' for classification tasks
-# - 'neg_mean_squared_error' for regression tasks
-# Example: "log_loss", "f1", "neg_mean_absolute_error"
+# metric: The scikit-learn scoring metric name for Cross Validation.
+# If null (~), it defaults to 'roc_auc' for classification and 'neg_mean_squared_error' for regression.
+# Example: "f1", "accuracy", "neg_log_loss", "r2", "neg_mean_absolute_error"
 metric: ~
 
-# Whether the final submission.csv should output probabilities (true) or discrete classes (false)
-# Default is true, which is common for Kaggle classification metrics like log_loss or roc_auc.
-# Set to false if the competition requires absolute class predictions (e.g. 0 or 1).
+# pred_prob: Boolean indicating if the final Kaggle submission should be probabilities (true) 
+# or discrete class labels (false). Default: true.
+# Note: If example_submission is provided, it may override this setting.
 pred_prob: true
 
-# The path to an example submission file provided by Kaggle (optional)
-# The pipeline can inspect this file to automatically determine if the competition
-# requires probabilities or discrete classes, overriding pred_prob.
+# example_submission: Path to a Kaggle-provided sample submission file.
+# The pipeline uses this to automatically detect if the competition requires 
+# probabilities or classes, and to identify the correct target column name.
 example_submission: ~
 
-# Automatically submit the final submission.csv to Kaggle when all iterations are complete
-# Requires the Kaggle CLI to be installed and authenticated (~/.kaggle/kaggle.json)
+# auto_kaggle_submit: If true, the pipeline will automatically attempt to submit
+# the final "submission.csv" to Kaggle using the Kaggle CLI.
+# Requires: `pip install kaggle` and a valid `~/.kaggle/kaggle.json`.
 auto_kaggle_submit: false
 
-# The number of iterations the Agentic LLM should run to improve the model
+# iterations: The maximum number of improvement cycles the Agentic LLM should perform.
+# In each iteration, the LLM analyzes previous results and proposes script modifications.
 iterations: 5
 
-# The maximum execution time (in seconds) allowed for a single generated model script
-# This prevents the LLM from accidentally writing infinite loops or exhaustive grid searches.
+# timeout: The maximum time (in seconds) allowed for a single generated training script to run.
+# Prevents the pipeline from hanging on infinite loops or extremely slow training code.
 timeout: 600
 
-# Weights & Biases configuration
+# wandb: Weights & Biases configuration for tracking experiments and metrics.
 wandb:
+  # enabled: Whether to log results to wandb.
   enabled: true
+  # entity: Your W&B username or team name.
   entity: "kevinwangstats"

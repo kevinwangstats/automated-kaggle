@@ -54,22 +54,6 @@ def create_template_script(dataset_path: str, target_col: str, model_type: str, 
     submission['{target_col}'] = preds
     submission.to_csv("raw_submission.csv", index=False)
     print("Saved raw_submission.csv")
-    
-    try:
-        import subprocess
-        import yaml
-        import os
-        cfg_path = "tests/titanic_config.yaml" if "titanic" in "{dataset_path}" and os.path.exists("tests/titanic_config.yaml") else "config.yaml"
-        auto_submit = False
-        if os.path.exists(cfg_path):
-            with open(cfg_path, "r") as f:
-                cfg_data = yaml.safe_load(f)
-                auto_submit = cfg_data.get("auto_kaggle_submit", False)
-        if auto_submit:
-            print("Formatting submission for Kaggle...")
-            subprocess.run(["python", "kaggle_submit.py", "--config", cfg_path])
-    except Exception as e:
-        print(f"Failed to format submission: {{e}}")
 '''
 
     script = f'''import pandas as pd

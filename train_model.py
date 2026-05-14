@@ -154,23 +154,6 @@ def train_and_evaluate():
     submission.to_csv("raw_submission.csv", index=False)
     print("Saved raw_submission.csv")
     
-    # Automatically format submission using the separate kaggle_submit.py script
-    import subprocess
-    import yaml
-    import os
-    cfg = "tests/titanic_config.yaml" if "titanic" in "data/titanic/train.csv" and os.path.exists("tests/titanic_config.yaml") else "config.yaml"
-    auto_submit = False
-    if os.path.exists(cfg):
-        try:
-            with open(cfg, "r") as f:
-                cfg_data = yaml.safe_load(f)
-                auto_submit = cfg_data.get("auto_kaggle_submit", False)
-        except Exception:
-            pass
-    if auto_submit:
-        print("Formatting submission for Kaggle...")
-        subprocess.run(["python", "kaggle_submit.py", "--config", cfg])
-
     return final_score
 
 if __name__ == "__main__":

@@ -46,8 +46,9 @@ def run_training_script(script_path="train_model.py", timeout: int = 600, config
         except Exception:
             pass
             
-    if auto_submit:
-        subprocess.run(["python", "kaggle_submit.py", "--config", config_path], capture_output=True)
+    # Always attempt to format the submission if it was generated
+    if os.path.exists("raw_submission.csv"):
+        subprocess.run(["python", "kaggle_submit.py", "--config", config_path, "--format-only"], capture_output=True)
         
     # Parse final score
     match = re.search(r'FINAL_CV_SCORE: ([\d\.]+)', result.stdout)
@@ -71,7 +72,8 @@ def run_agent_loop(
     wandb_enabled: bool = False,
     wandb_project: str = None,
     wandb_entity: str = None,
-    pred_prob: bool = True
+    pred_prob: bool = True,
+    config_path: str = "config.yaml"
 ):
     log_stage("Starting Agentic Loop")
     current_best_score = base_score
@@ -268,6 +270,4 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. D
             json.dump(history, f, indent=2)
 
     log_stage("Agentic Loop Finished")
-    log_metric("Final Best Score", current_best_score)
-gentic Loop Finished")
     log_metric("Final Best Score", current_best_score)

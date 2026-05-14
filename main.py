@@ -154,6 +154,8 @@ def main():
         
         # Phase 4: Automated Kaggle Submission
         import kaggle_submit
+        log_stage("Final Kaggle Submission")
+        kaggle_submit.format_submission(args.config)
         kaggle_submit.submit_to_kaggle(args.config)
         
         if wandb_enabled:

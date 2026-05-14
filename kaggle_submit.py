@@ -4,6 +4,10 @@ import os
 import argparse
 
 def format_submission(config_path="config.yaml"):
+    """
+    Reads raw_submission.csv and formats it into submission.csv based on config.
+    Uses example_submission to infer target column and data types if available.
+    """
     if not os.path.exists(config_path):
         print(f"[kaggle_submit] Config file {config_path} not found.")
         return
@@ -39,6 +43,26 @@ def format_submission(config_path="config.yaml"):
 
     final_sub = raw_sub.copy()
     
+    # If we have an example submission, ensure the column names and types match
+    if example_sub_path and os.path.exists(example_sub_path):
+        example_sub = pd.read_csv(example_sub_path, nrows=1)
+        if len(example_sub.columns) > 1 and len(final_sub.columns) > 1:
+            # Match ID column name
+            id_col_name = example_sub.columns[0]
+            current_id_name = final_sub.columns[0]
+            if current_id_name != id_col_name:
+                print(f"[kaggle_submit] Renaming ID column from '{current_id_name}' to '{id_col_name}'")
+                final_sub = final_sub.rename(columns={current_id_name: id_col_name})
+                
+            # Match target column name
+            target_col_name = example_sub.columns[1]
+            current_target_name = final_sub.columns[1]
+            if current_target_name != target_col_name:
+                print(f"[kaggle_submit] Renaming target column from '{current_target_name}' to '{target_col_name}'")
+                final_sub = final_sub.rename(columns={current_target_name: target_col_name})
+            
+            target_col = target_col_name
+
     if len(final_sub.columns) > 1:
         target_col = final_sub.columns[1]
         if not pred_prob:
@@ -51,6 +75,9 @@ def format_submission(config_path="config.yaml"):
     print("[kaggle_submit] Saved final formatted submission to submission.csv")
 
 def submit_to_kaggle(config_path="config.yaml"):
+    """
+    Submits submission.csv to Kaggle if auto_kaggle_submit is enabled.
+    """
     import subprocess
     if not os.path.exists(config_path):
         print(f"[kaggle_submit] Config file {config_path} not found.")
@@ -96,5 +123,15 @@ def submit_to_kaggle(config_path="config.yaml"):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default="config.yaml")
+    parser.add_argument("--format-only", action="store_true", help="Only format the submission, do not submit.")
+    parser.add_argument("--submit-only", action="store_true", help="Only submit the existing submission.csv, do not re-format.")
     args = parser.parse_args()
-    format_submission(args.config)
+    
+    if args.submit_only:
+        submit_to_kaggle(args.config)
+    elif args.format_only:
+        format_submission(args.config)
+    else:
+        # Default behavior: do both
+        format_submission(args.config)
+        submit_to_kaggle(args.config)
