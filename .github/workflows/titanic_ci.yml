@@ -40,9 +40,18 @@ jobs:
 
     - name: Verify Submission File
       run: |
-        if [ ! -f "submission.csv" ]; then
-          echo "Error: submission.csv was not generated!"
-          exit 1
+        # The submission file should be in data/titanic/submission.csv
+        # because example_submission is data/titanic/gender_submission.csv
+        SUB_FILE="data/titanic/submission.csv"
+        if [ ! -f "$SUB_FILE" ]; then
+          echo "Error: $SUB_FILE was not generated!"
+          # Fallback check in case config changed or logic failed
+          if [ -f "submission.csv" ]; then
+            echo "Warning: Found submission.csv in root instead of $SUB_FILE"
+            SUB_FILE="submission.csv"
+          else
+            exit 1
+          fi
         fi
-        echo "Found submission.csv. Checking contents..."
-        head -n 5 submission.csv
+        echo "Found submission file at $SUB_FILE. Checking contents..."
+        head -n 5 "$SUB_FILE"

@@ -3,6 +3,30 @@ import yaml
 import os
 import argparse
 
+def get_submission_path(config):
+    """
+    Determines where submission.csv should be saved.
+    Default is "submission.csv" in the current directory.
+    If example_submission is provided, it attempts to save it in the same directory,
+    unless that would overwrite the example_submission itself.
+    """
+    example_sub_path = config.get("example_submission")
+    output_path = "submission.csv"
+    
+    if example_sub_path:
+        example_dir = os.path.dirname(example_sub_path)
+        # If example_dir is empty (file is in root), use current dir
+        if not example_dir:
+            example_dir = "."
+            
+        potential_path = os.path.join(example_dir, "submission.csv")
+        
+        # Check if potential_path is the same as example_sub_path to avoid overwriting
+        if os.path.abspath(potential_path) != os.path.abspath(example_sub_path):
+            output_path = potential_path
+            
+    return output_path
+
 def format_submission(config_path="config.yaml"):
     """
     Reads raw_submission.csv and formats it into submission.csv based on config.
@@ -71,12 +95,13 @@ def format_submission(config_path="config.yaml"):
             if pd.api.types.is_float_dtype(final_sub[target_col]) and final_sub[target_col].between(0, 1).all():
                 final_sub[target_col] = (final_sub[target_col] >= 0.5).astype(int)
 
-    final_sub.to_csv("submission.csv", index=False)
-    print("[kaggle_submit] Saved final formatted submission to submission.csv")
+    output_path = get_submission_path(config)
+    final_sub.to_csv(output_path, index=False)
+    print(f"[kaggle_submit] Saved final formatted submission to {output_path}")
 
 def submit_to_kaggle(config_path="config.yaml"):
     """
-    Submits submission.csv to Kaggle if auto_kaggle_submit is enabled.
+    Submits the formatted submission to Kaggle if auto_kaggle_submit is enabled.
     """
     import subprocess
     if not os.path.exists(config_path):
@@ -90,8 +115,9 @@ def submit_to_kaggle(config_path="config.yaml"):
         print("[kaggle_submit] auto_kaggle_submit is false or not set. Skipping automated Kaggle submission.")
         return
 
-    if not os.path.exists("submission.csv"):
-        print("[kaggle_submit] submission.csv not found. Cannot submit.")
+    sub_path = get_submission_path(config)
+    if not os.path.exists(sub_path):
+        print(f"[kaggle_submit] {sub_path} not found. Cannot submit.")
         return
 
     dataset_path = config.get("dataset_path", "")
@@ -108,7 +134,7 @@ def submit_to_kaggle(config_path="config.yaml"):
     print(f"[kaggle_submit] Submitting to Kaggle competition: {competition_name}")
     try:
         result = subprocess.run(
-            ["kaggle", "competitions", "submit", "-c", competition_name, "-f", "submission.csv", "-m", "Agentic AutoML Pipeline Submission"],
+            ["kaggle", "competitions", "submit", "-c", competition_name, "-f", sub_path, "-m", "Agentic AutoML Pipeline Submission"],
             capture_output=True,
             text=True
         )
@@ -124,7 +150,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default="config.yaml")
     parser.add_argument("--format-only", action="store_true", help="Only format the submission, do not submit.")
-    parser.add_argument("--submit-only", action="store_true", help="Only submit the existing submission.csv, do not re-format.")
+    parser.add_argument("--submit-only", action="store_true", help="Only submit the existing submission, do not re-format.")
     args = parser.parse_args()
     
     if args.submit_only:
