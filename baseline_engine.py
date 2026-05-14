@@ -6,49 +6,17 @@ from logger import log_stage, log_metric, log_error, suppress_stdout_stderr
 import os
 
 def create_template_script(dataset_path: str, target_col: str, best_model_name: str, test_path: str = None, custom_metric: str = None) -> str:
-    # Custom metric handling
+    # This function now generates a script that uses a robust scikit-learn Pipeline.
+    # It solves data leakage and brittle-preprocessing issues.
+    
     metric_str = f"'{custom_metric}'" if custom_metric else "('roc_auc' if task == 'classification' else 'neg_mean_squared_error')"
-    
-    inference_block = ""
-    if test_path:
-        pred_line = "preds = ensemble.predict_proba(test_X)[:, 1] if task == 'classification' else ensemble.predict(test_X)"
-        
-        inference_block = f'''
-    # 4. Generate Submission
-    print("Generating submission...")
-    ensemble.fit(X, y)
-    test_df = pd.read_csv("{test_path}")
-    # Simple preprocessing matching train
-    test_X = test_df.copy()
-    import warnings
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        cat_cols = test_X.select_dtypes(include=['object', 'category']).columns
-    for col in cat_cols:
-        test_X[col] = test_X[col].astype(str)
-        le = LabelEncoder()
-        test_X[col] = le.fit_transform(test_X[col])
-        
-    # Ensure columns match
-    missing_cols = set(X.columns) - set(test_X.columns)
-    for c in missing_cols:
-        test_X[c] = 0
-    test_X = test_X[X.columns]
-    
-    {pred_line}
-        
-    submission = pd.DataFrame()
-    if len(test_df.columns) > 0:
-        submission[test_df.columns[0]] = test_df.iloc[:, 0]
-    submission['{target_col}'] = preds
-    submission.to_csv("raw_submission.csv", index=False)
-    print("Saved raw_submission.csv")
-'''
 
     script = f'''import pandas as pd
 import numpy as np
 from sklearn.model_selection import KFold, cross_val_score
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
 from sklearn.metrics import make_scorer, roc_auc_score, mean_squared_error
 from sklearn.ensemble import VotingClassifier, VotingRegressor
 from xgboost import XGBRegressor, XGBClassifier
@@ -56,7 +24,14 @@ from lightgbm import LGBMRegressor, LGBMClassifier
 from catboost import CatBoostRegressor, CatBoostClassifier
 import h2o
 from h2o.sklearn import H2OAutoMLClassifier, H2OAutoMLRegressor
+from sklearn.base import ClassifierMixin, RegressorMixin
 import re
+
+class H2OClassifier(H2OAutoMLClassifier, ClassifierMixin):
+    _estimator_type = "classifier"
+
+class H2ORegressor(H2OAutoMLRegressor, RegressorMixin):
+    _estimator_type = "regressor"
 
 def train_and_evaluate():
     # 1. Load Data
@@ -65,26 +40,31 @@ def train_and_evaluate():
     
     # Basic Preprocessing
     df = df.dropna(subset=[target_col])
-    y = df[target_col]
+    y_raw = df[target_col]
     X = df.drop(columns=[target_col])
     
     X.columns = [re.sub(r'[^\\w\\s]', '', col).replace(' ', '_') for col in X.columns]
     
-    import warnings
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        cat_cols = X.select_dtypes(include=['object', 'category']).columns
-    for col in cat_cols:
-        X[col] = X[col].astype(str)
-        le = LabelEncoder()
-        X[col] = le.fit_transform(X[col])
-        
-    task = 'classification' if y.nunique() < 20 else 'regression'
+    task = 'classification' if y_raw.nunique() < 20 else 'regression'
     if task == 'classification':
         le_y = LabelEncoder()
-        y = le_y.fit_transform(y)
-    
-    # 2. Model Initialization (Multi-Model)
+        y = le_y.fit_transform(y_raw)
+    else:
+        y = y_raw
+
+    # 2. Define Preprocessing Pipeline
+    categorical_features = X.select_dtypes(include=['object', 'category', 'str']).columns
+    numerical_features = X.select_dtypes(include=np.number).columns
+
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('num', 'passthrough', numerical_features),
+            ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features)
+        ],
+        remainder='passthrough'
+    )
+
+    # 3. Model Initialization (Multi-Model)
     try:
         h2o.init(verbose=False)
     except Exception:
@@ -92,54 +72,65 @@ def train_and_evaluate():
     
     models = []
     if task == 'classification':
-        try:
-            models.append(('xgb', XGBClassifier(random_state=42)))
+        try: models.append(('xgb', XGBClassifier(random_state=42)))
         except NameError: pass
-        try:
-            models.append(('lgb', LGBMClassifier(random_state=42, verbose=-1)))
+        try: models.append(('lgb', LGBMClassifier(random_state=42, verbose=-1)))
         except NameError: pass
-        try:
-            models.append(('cat', CatBoostClassifier(random_state=42, verbose=0)))
+        try: models.append(('cat', CatBoostClassifier(random_state=42, verbose=0)))
         except NameError: pass
-        try:
-            h2o_model = H2OAutoMLClassifier(max_models=3, seed=42)
-            h2o_model._estimator_type = "classifier"
-            models.append(('h2o', h2o_model))
+        try: models.append(('h2o', H2OClassifier(max_models=3, seed=42)))
         except (NameError, Exception): pass
         
-        if not models:
-            raise RuntimeError("No models could be initialized.")
+        if not models: raise RuntimeError("No models could be initialized.")
         ensemble = VotingClassifier(estimators=models, voting='soft')
     else:
-        try:
-            models.append(('xgb', XGBRegressor(random_state=42)))
+        try: models.append(('xgb', XGBRegressor(random_state=42)))
         except NameError: pass
-        try:
-            models.append(('lgb', LGBMRegressor(random_state=42, verbose=-1)))
+        try: models.append(('lgb', LGBMRegressor(random_state=42, verbose=-1)))
         except NameError: pass
-        try:
-            models.append(('cat', CatBoostRegressor(random_state=42, verbose=0)))
+        try: models.append(('cat', CatBoostRegressor(random_state=42, verbose=0)))
         except NameError: pass
-        try:
-            h2o_model = H2OAutoMLRegressor(max_models=3, seed=42)
-            h2o_model._estimator_type = "regressor"
-            models.append(('h2o', h2o_model))
+        try: models.append(('h2o', H2ORegressor(max_models=3, seed=42)))
         except (NameError, Exception): pass
         
-        if not models:
-            raise RuntimeError("No models could be initialized.")
+        if not models: raise RuntimeError("No models could be initialized.")
         ensemble = VotingRegressor(estimators=models)
+
+    # 4. Create Full Pipeline
+    pipeline = Pipeline(steps=[('preprocessor', preprocessor),
+                               ('classifier', ensemble)])
     
-    # 3. Cross Validation
+    # 5. Cross Validation
     cv = KFold(n_splits=5, shuffle=True, random_state=42)
     scoring = {metric_str}
     
     # Using n_jobs=1 because H2O and CatBoost have internal parallelism
-    scores = cross_val_score(ensemble, X, y, cv=cv, scoring=scoring, n_jobs=1)
+    scores = cross_val_score(pipeline, X, y, cv=cv, scoring=scoring, n_jobs=1)
     
     final_score = np.mean(scores)
     print(f"FINAL_CV_SCORE: {{final_score:.4f}}")
-    {inference_block}
+
+    # 6. Generate Submission (if test_path is provided)
+    if "{test_path}":
+        print("Generating submission...")
+        pipeline.fit(X, y)
+        test_df = pd.read_csv("{test_path}")
+        
+        # Ensure test columns match train columns before preprocessing
+        test_X = test_df[X.columns.intersection(test_df.columns)]
+
+        if task == 'classification':
+            preds = pipeline.predict_proba(test_X)[:, 1]
+        else:
+            preds = pipeline.predict(test_X)
+            
+        submission = pd.DataFrame()
+        if len(test_df.columns) > 0 and test_df.columns[0] in test_df:
+             submission[test_df.columns[0]] = test_df.iloc[:, 0]
+        submission['{target_col}'] = preds
+        submission.to_csv("raw_submission.csv", index=False)
+        print("Saved raw_submission.csv")
+
     return final_score
 
 if __name__ == "__main__":
@@ -156,22 +147,31 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
             raise ValueError(f"Target column '{target_col}' not found in dataset.")
             
         df = df.dropna(subset=[target_col])
-        y = df[target_col]
+        y_raw = df[target_col]
         X = df.drop(columns=[target_col])
-        import re
+        
         # Clean column names to avoid LightGBM JSON errors
         X.columns = [re.sub(r'[^\w\s]', '', col).replace(' ', '_') for col in X.columns]
         
-        for col in X.select_dtypes(include=['object', 'category']).columns:
-            X[col] = X[col].astype(str)
-            le = LabelEncoder()
-            X[col] = le.fit_transform(X[col])
-            
-        task = 'classification' if y.nunique() < 20 else 'regression'
+        task = 'classification' if y_raw.nunique() < 20 else 'regression'
         if task == 'classification':
             le_y = LabelEncoder()
-            y = le_y.fit_transform(y)
-            
+            y = le_y.fit_transform(y_raw)
+        else:
+            y = y_raw
+
+        # Define the same preprocessor that will be used in the generated script
+        categorical_features = X.select_dtypes(include=['object', 'category', 'str']).columns
+        numerical_features = X.select_dtypes(include=np.number).columns
+        
+        preprocessor = ColumnTransformer(
+            transformers=[
+                ('num', 'passthrough', numerical_features),
+                ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features)
+            ],
+            remainder='passthrough'
+        )
+
         scoring = custom_metric if custom_metric else ('roc_auc' if task == 'classification' else 'neg_mean_squared_error')
         cv = KFold(n_splits=3, shuffle=True, random_state=42) # 3 splits for speed in baseline
         
@@ -179,42 +179,45 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
         metric_reports = {}
         models_to_eval = {}
         
+        from sklearn.pipeline import Pipeline
+
         with suppress_stdout_stderr():
+            # Initialize models
             try:
                 from xgboost import XGBRegressor, XGBClassifier
                 models_to_eval['xgb'] = XGBClassifier(random_state=42) if task == 'classification' else XGBRegressor(random_state=42)
             except Exception: pass
-                
             try:
                 from lightgbm import LGBMRegressor, LGBMClassifier
                 models_to_eval['lgb'] = LGBMClassifier(random_state=42, verbose=-1) if task == 'classification' else LGBMRegressor(random_state=42, verbose=-1)
             except Exception: pass
-                
             try:
                 from catboost import CatBoostRegressor, CatBoostClassifier
                 models_to_eval['cat'] = CatBoostClassifier(random_state=42, verbose=0) if task == 'classification' else CatBoostRegressor(random_state=42, verbose=0)
             except Exception: pass
-
             try:
                 import h2o
                 from h2o.sklearn import H2OAutoMLClassifier, H2OAutoMLRegressor
+                from sklearn.base import ClassifierMixin, RegressorMixin
                 h2o.init(verbose=False)
-                h2o_model = H2OAutoMLClassifier(max_models=3, seed=42) if task == 'classification' else H2OAutoMLRegressor(max_models=3, seed=42)
-                h2o_model._estimator_type = "classifier" if task == 'classification' else "regressor"
+                class H2OClf(H2OAutoMLClassifier, ClassifierMixin): _estimator_type = "classifier"
+                class H2OReg(H2OAutoMLRegressor, RegressorMixin): _estimator_type = "regressor"
+                h2o_model = H2OClf(max_models=3, seed=42) if task == 'classification' else H2OReg(max_models=3, seed=42)
                 models_to_eval['h2o'] = h2o_model
             except Exception: pass
 
             for m_name, model in models_to_eval.items():
                 try:
+                    pipeline = Pipeline(steps=[('preprocessor', preprocessor), ('classifier', model)])
                     n_jobs = 1 if m_name == 'h2o' else -1
-                    scores = cross_val_score(model, X, y, cv=cv, scoring=scoring, n_jobs=n_jobs)
+                    scores = cross_val_score(pipeline, X, y, cv=cv, scoring=scoring, n_jobs=n_jobs)
                     results[m_name] = np.mean(scores)
                     
                     if task == 'classification':
                         from sklearn.model_selection import cross_val_predict
                         from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
                         
-                        preds = cross_val_predict(model, X, y, cv=cv, n_jobs=n_jobs)
+                        preds = cross_val_predict(pipeline, X, y, cv=cv, n_jobs=n_jobs)
                         acc = accuracy_score(y, preds)
                         
                         report = f"--- {m_name.upper()} ---\n"
@@ -244,6 +247,7 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
                             
                         metric_reports[m_name] = report
                 except Exception as e:
+                    print(f"Failed to evaluate {m_name}: {e}")
                     pass
         
         # Print detailed reports outside the suppression block
