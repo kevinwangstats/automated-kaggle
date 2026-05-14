@@ -20,7 +20,11 @@ def create_template_script(dataset_path: str, target_col: str, best_model_name: 
     test_df = pd.read_csv("{test_path}")
     # Simple preprocessing matching train
     test_X = test_df.copy()
-    for col in test_X.select_dtypes(include=['object', 'category']).columns:
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        cat_cols = test_X.select_dtypes(include=['object', 'category']).columns
+    for col in cat_cols:
         test_X[col] = test_X[col].astype(str)
         le = LabelEncoder()
         test_X[col] = le.fit_transform(test_X[col])
@@ -66,7 +70,11 @@ def train_and_evaluate():
     
     X.columns = [re.sub(r'[^\\w\\s]', '', col).replace(' ', '_') for col in X.columns]
     
-    for col in X.select_dtypes(include=['object', 'category']).columns:
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        cat_cols = X.select_dtypes(include=['object', 'category']).columns
+    for col in cat_cols:
         X[col] = X[col].astype(str)
         le = LabelEncoder()
         X[col] = le.fit_transform(X[col])
@@ -77,20 +85,49 @@ def train_and_evaluate():
         y = le_y.fit_transform(y)
     
     # 2. Model Initialization (Multi-Model)
-    h2o.init(verbose=False)
+    try:
+        h2o.init(verbose=False)
+    except Exception:
+        pass
     
     models = []
     if task == 'classification':
-        models.append(('xgb', XGBClassifier(random_state=42)))
-        models.append(('lgb', LGBMClassifier(random_state=42, verbose=-1)))
-        models.append(('cat', CatBoostClassifier(random_state=42, verbose=0)))
-        models.append(('h2o', H2OAutoMLClassifier(max_models=3, seed=42)))
+        try:
+            models.append(('xgb', XGBClassifier(random_state=42)))
+        except NameError: pass
+        try:
+            models.append(('lgb', LGBMClassifier(random_state=42, verbose=-1)))
+        except NameError: pass
+        try:
+            models.append(('cat', CatBoostClassifier(random_state=42, verbose=0)))
+        except NameError: pass
+        try:
+            h2o_model = H2OAutoMLClassifier(max_models=3, seed=42)
+            h2o_model._estimator_type = "classifier"
+            models.append(('h2o', h2o_model))
+        except (NameError, Exception): pass
+        
+        if not models:
+            raise RuntimeError("No models could be initialized.")
         ensemble = VotingClassifier(estimators=models, voting='soft')
     else:
-        models.append(('xgb', XGBRegressor(random_state=42)))
-        models.append(('lgb', LGBMRegressor(random_state=42, verbose=-1)))
-        models.append(('cat', CatBoostRegressor(random_state=42, verbose=0)))
-        models.append(('h2o', H2OAutoMLRegressor(max_models=3, seed=42)))
+        try:
+            models.append(('xgb', XGBRegressor(random_state=42)))
+        except NameError: pass
+        try:
+            models.append(('lgb', LGBMRegressor(random_state=42, verbose=-1)))
+        except NameError: pass
+        try:
+            models.append(('cat', CatBoostRegressor(random_state=42, verbose=0)))
+        except NameError: pass
+        try:
+            h2o_model = H2OAutoMLRegressor(max_models=3, seed=42)
+            h2o_model._estimator_type = "regressor"
+            models.append(('h2o', h2o_model))
+        except (NameError, Exception): pass
+        
+        if not models:
+            raise RuntimeError("No models could be initialized.")
         ensemble = VotingRegressor(estimators=models)
     
     # 3. Cross Validation
@@ -162,7 +199,9 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
                 import h2o
                 from h2o.sklearn import H2OAutoMLClassifier, H2OAutoMLRegressor
                 h2o.init(verbose=False)
-                models_to_eval['h2o'] = H2OAutoMLClassifier(max_models=3, seed=42) if task == 'classification' else H2OAutoMLRegressor(max_models=3, seed=42)
+                h2o_model = H2OAutoMLClassifier(max_models=3, seed=42) if task == 'classification' else H2OAutoMLRegressor(max_models=3, seed=42)
+                h2o_model._estimator_type = "classifier" if task == 'classification' else "regressor"
+                models_to_eval['h2o'] = h2o_model
             except Exception: pass
 
             for m_name, model in models_to_eval.items():
