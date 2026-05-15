@@ -136,6 +136,11 @@ def run_agent_loop(
 
         prompt = f"""You are an expert AI Data Scientist. Your goal is to improve the Cross-Validation score of the model.
 
+CRITICAL: Your script MUST remain dataset-agnostic. 
+- ALWAYS read `dataset_path`, `target_col`, and `test_path` from `config.yaml` using `yaml.safe_load(open("config.yaml"))`.
+- NEVER hardcode column names (like "Survived") or file paths (like "data/titanic/train.csv").
+- Use the `target_col` variable from the config for all target-related operations, including the submission file column name.
+
 You have access to the following machine learning frameworks:
 - XGBoost (`XGBClassifier`, `XGBRegressor`)
 - LightGBM (`LGBMClassifier`, `LGBMRegressor`)

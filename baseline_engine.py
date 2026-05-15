@@ -13,6 +13,10 @@ def create_template_script(dataset_path: str, target_col: str, best_model_name: 
 
     script = f'''import pandas as pd
 import numpy as np
+import yaml
+import json
+import os
+import re
 from sklearn.model_selection import KFold, cross_val_score
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 from sklearn.compose import ColumnTransformer
@@ -22,12 +26,19 @@ from sklearn.ensemble import VotingClassifier, VotingRegressor
 from xgboost import XGBRegressor, XGBClassifier
 from lightgbm import LGBMRegressor, LGBMClassifier
 from catboost import CatBoostRegressor, CatBoostClassifier
-import re
+
+def load_config(config_path="config.yaml"):
+    with open(config_path, "r") as f:
+        return yaml.safe_load(f)
 
 def train_and_evaluate():
-    # 1. Load Data
-    df = pd.read_csv("{dataset_path}")
-    target_col = "{target_col}"
+    # 1. Load Configuration & Data
+    config = load_config()
+    dataset_path = config.get("dataset_path")
+    target_col = config.get("target_col")
+    test_path = config.get("test_path")
+
+    df = pd.read_csv(dataset_path)
     
     # Basic Preprocessing
     df = df.dropna(subset=[target_col])
@@ -93,16 +104,14 @@ def train_and_evaluate():
     scores = cross_val_score(pipeline, X, y, cv=cv, scoring=scoring, n_jobs=1)
 
     final_score = np.mean(scores)
-    import json
     with open("metrics.json", "w") as f:
         json.dump({{"cv_score": final_score}}, f)
 
     # 6. Generate Submission (if test_path is provided)
-
-    if "{test_path}":
+    if test_path and os.path.exists(test_path):
         print("Generating submission...")
         pipeline.fit(X, y)
-        test_df = pd.read_csv("{test_path}")
+        test_df = pd.read_csv(test_path)
         
         # Ensure test columns match train columns before preprocessing
         test_X = test_df[X.columns.intersection(test_df.columns)]
@@ -113,9 +122,9 @@ def train_and_evaluate():
             preds = pipeline.predict(test_X)
             
         submission = pd.DataFrame()
-        if len(test_df.columns) > 0 and test_df.columns[0] in test_df:
+        if len(test_df.columns) > 0:
              submission[test_df.columns[0]] = test_df.iloc[:, 0]
-        submission['{target_col}'] = preds
+        submission[target_col] = preds
         submission.to_csv("raw_submission.csv", index=False)
         print("Saved raw_submission.csv")
 
@@ -124,6 +133,8 @@ def train_and_evaluate():
 if __name__ == "__main__":
     train_and_evaluate()
 '''
+    return script
+
     return script
 
 
