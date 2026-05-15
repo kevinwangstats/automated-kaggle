@@ -19,8 +19,11 @@ def read_file(filepath: str) -> str:
         return f.read()
 
 def run_training_script(script_path="train_model.py", timeout: int = 600, config_path="config.yaml"):
-    # Run the script as a subprocess to capture its FINAL_CV_SCORE output safely
-    # and prevent crashes in the orchestrator if the generated code is bad.
+    # Ensure no stale metrics exist
+    if os.path.exists("metrics.json"):
+        os.remove("metrics.json")
+        
+    # Run the script as a subprocess
     try:
         result = subprocess.run(
             ["python", script_path],
@@ -50,12 +53,18 @@ def run_training_script(script_path="train_model.py", timeout: int = 600, config
     if os.path.exists("raw_submission.csv"):
         subprocess.run(["python", "kaggle_submit.py", "--config", config_path, "--format-only"], capture_output=True)
         
-    # Parse final score
-    match = re.search(r'FINAL_CV_SCORE: ([\d\.]+)', result.stdout)
-    if not match:
-        raise ValueError(f"Could not find FINAL_CV_SCORE in output. Output was:\n{result.stdout}")
+    # Parse final score from metrics.json
+    if not os.path.exists("metrics.json"):
+        raise ValueError(f"Could not find metrics.json after script execution. Output was:\n{result.stdout}\n{result.stderr}")
         
-    return float(match.group(1))
+    try:
+        with open("metrics.json", "r") as f:
+            metrics = json.load(f)
+        if "cv_score" not in metrics:
+            raise ValueError(f"metrics.json missing 'cv_score' key: {metrics}")
+        return float(metrics["cv_score"])
+    except json.JSONDecodeError:
+        raise ValueError(f"metrics.json is malformed. Content: {open('metrics.json', 'r').read()}")
 
 def run_agent_loop(
     dataset_path: str,
@@ -148,7 +157,7 @@ Current Best Score: {current_best_score}
 {history_context}
 Please propose a modified version of the Python script to improve the model. 
 You can add feature engineering, handle missing values better, tune hyperparameters, or change the model architecture.
-Always ensure you output the FINAL_CV_SCORE in the same format: print(f"FINAL_CV_SCORE: {{final_score:.4f}}")
+Always ensure you write the final cross-validation score to a file named `metrics.json` with the format: `{"cv_score": final_score}`.
 {pred_prob_instruction}
 Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. Do not include other text.
 """

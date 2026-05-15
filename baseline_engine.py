@@ -89,13 +89,16 @@ def train_and_evaluate():
     cv = KFold(n_splits=5, shuffle=True, random_state=42)
     scoring = {metric_str}
     
-    # n_jobs=1 because CatBoost/LightGBM have robust internal parallelism
+    # Using n_jobs=1 because H2O and CatBoost have internal parallelism
     scores = cross_val_score(pipeline, X, y, cv=cv, scoring=scoring, n_jobs=1)
-    
+
     final_score = np.mean(scores)
-    print(f"FINAL_CV_SCORE: {{final_score:.4f}}")
+    import json
+    with open("metrics.json", "w") as f:
+        json.dump({{"cv_score": final_score}}, f)
 
     # 6. Generate Submission (if test_path is provided)
+
     if "{test_path}":
         print("Generating submission...")
         pipeline.fit(X, y)
