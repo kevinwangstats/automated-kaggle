@@ -17,9 +17,6 @@ target_col: "Survived"
 test_path: "data/titanic/test.csv"
 example_submission: "data/titanic/gender_submission.csv"
 
-# LLM model to use
-model: ollama/qwen3.5:2b
-
 # roc_auc is standard for binary classification
 metric: "roc_auc"
 
@@ -32,8 +29,9 @@ iterations: 5
 # Generous timeout for CI runners
 timeout: 60
 
+# LLM model to use
 # model: ollama/qwen3.5:2b
-model: gemini/gemini-2.5-flash-lite
+model: gemini/gemini-2.5-pro
 auto_kaggle_submit: true
 
 # Weights & Biases configuration
