@@ -156,7 +156,7 @@ Current Best Score: {current_best_score}
 {history_context}
 Please propose a modified version of the Python script to improve the model. 
 You can add feature engineering, handle missing values better, tune hyperparameters, or change the model architecture.
-Always ensure you write the final cross-validation score to a file named `metrics.json` with the format: `{"cv_score": final_score}`.
+Always ensure you write the final cross-validation score to a file named `metrics.json` with the format: `{{"cv_score": final_score}}`.
 {pred_prob_instruction}
 Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. Do not include other text.
 """
