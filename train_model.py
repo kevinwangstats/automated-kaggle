@@ -6,7 +6,8 @@ from sklearn.impute import SimpleImputer
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import roc_auc_score
-from sklearn.ensemble import VotingClassifier
+from sklearn.ensemble import StackingClassifier
+from sklearn.linear_model import LogisticRegression
 from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
 from catboost import CatBoostClassifier
@@ -85,6 +86,18 @@ def train_and_evaluate():
                 training_data_stats['global_age_median'] = df['Age'].median()
             df['Age'].fillna(training_data_stats['global_age_median'], inplace=True)
 
+        # New Feature: Age * Pclass
+        df['Age_Pclass'] = df['Age'] * df['Pclass']
+
+        # New Feature: Ticket Prefix
+        def get_ticket_prefix(ticket):
+            ticket = ticket.replace('.', '').replace('/', '').split()
+            prefix = [t for t in ticket if not t.isdigit()]
+            if not prefix:
+                return 'X'
+            return ''.join(prefix)
+        df['Ticket_Prefix'] = df['Ticket'].apply(get_ticket_prefix)
+
         # Drop original/unnecessary columns
         df = df.drop(['Name', 'Ticket', 'Cabin', 'SibSp', 'Parch'], axis=1)
         
@@ -117,35 +130,49 @@ def train_and_evaluate():
     )
 
     # 4. Model Initialization (with tuned hyperparameters)
+    # Using slightly more complex models with lower learning rate
     xgb_params = {
-        'n_estimators': 300, 'learning_rate': 0.05, 'max_depth': 3,
-        'subsample': 0.7, 'colsample_bytree': 0.7, 'random_state': 42,
+        'n_estimators': 500, 'learning_rate': 0.02, 'max_depth': 4,
+        'subsample': 0.8, 'colsample_bytree': 0.8, 'random_state': 42,
         'use_label_encoder': False, 'eval_metric': 'logloss', 'n_jobs': -1
     }
     lgb_params = {
-        'n_estimators': 300, 'learning_rate': 0.05, 'num_leaves': 20,
-        'max_depth': 3, 'subsample': 0.7, 'colsample_bytree': 0.7,
-        'random_state': 42, 'n_jobs': -1, 'verbose': -1
+        'n_estimators': 500, 'learning_rate': 0.02, 'num_leaves': 20,
+        'max_depth': 4, 'subsample': 0.8, 'colsample_bytree': 0.8,
+        'random_state': 42, 'n_jobs': -1, 'verbose': -1, 'reg_alpha': 0.1, 'reg_lambda': 0.1
     }
     cat_params = {
-        'iterations': 300, 'learning_rate': 0.05, 'depth': 3,
-        'l2_leaf_reg': 3, 'random_state': 42, 'verbose': 0,
+        'iterations': 500, 'learning_rate': 0.02, 'depth': 4,
+        'l2_leaf_reg': 4, 'random_state': 42, 'verbose': 0,
         'loss_function': 'Logloss'
     }
 
     clf1 = XGBClassifier(**xgb_params)
     clf2 = LGBMClassifier(**lgb_params)
     clf3 = CatBoostClassifier(**cat_params)
+    
+    # Define base estimators for Stacking
+    estimators = [
+        ('xgb', clf1),
+        ('lgb', clf2),
+        ('cat', clf3)
+    ]
 
-    ensemble = VotingClassifier(
-        estimators=[('xgb', clf1), ('lgb', clf2), ('cat', clf3)],
-        voting='soft',
-        weights=[0.3, 0.35, 0.35] # Slightly favor LGBM/CatBoost
+    # Define meta-classifier
+    meta_classifier = LogisticRegression(C=1.0, random_state=42)
+
+    # Create the StackingClassifier
+    stacker = StackingClassifier(
+        estimators=estimators,
+        final_estimator=meta_classifier,
+        cv=KFold(n_splits=5, shuffle=True, random_state=1), # Internal CV for stacking
+        stack_method='predict_proba',
+        n_jobs=-1
     )
 
     # 5. Create Full Pipeline
     pipeline = Pipeline(steps=[('preprocessor', preprocessor),
-                               ('classifier', ensemble)])
+                               ('classifier', stacker)])
     
     # 6. Cross Validation
     cv = KFold(n_splits=5, shuffle=True, random_state=42)
