@@ -17,6 +17,7 @@ import yaml
 import json
 import os
 import re
+import argparse
 from sklearn.model_selection import KFold, cross_val_score
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 from sklearn.compose import ColumnTransformer
@@ -31,9 +32,9 @@ def load_config(config_path="config.yaml"):
     with open(config_path, "r") as f:
         return yaml.safe_load(f)
 
-def train_and_evaluate():
+def train_and_evaluate(config_path="config.yaml"):
     # 1. Load Configuration & Data
-    config = load_config()
+    config = load_config(config_path)
     dataset_path = config.get("dataset_path")
     target_col = config.get("target_col")
     test_path = config.get("test_path")
@@ -131,10 +132,11 @@ def train_and_evaluate():
     return final_score
 
 if __name__ == "__main__":
-    train_and_evaluate()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str, default="config.yaml", help="Path to config file")
+    args = parser.parse_args()
+    train_and_evaluate(args.config)
 '''
-    return script
-
     return script
 
 

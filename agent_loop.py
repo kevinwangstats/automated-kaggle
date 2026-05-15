@@ -27,7 +27,7 @@ def run_training_script(script_path="train_model.py", timeout: int = 600, config
     # Run the script as a subprocess
     try:
         result = subprocess.run(
-            ["python", script_path],
+            ["python", script_path, "--config", config_path],
             capture_output=True,
             text=True,
             timeout=timeout
@@ -137,9 +137,14 @@ def run_agent_loop(
         prompt = f"""You are an expert AI Data Scientist. Your goal is to improve the Cross-Validation score of the model.
 
 CRITICAL: Your script MUST remain dataset-agnostic. 
-- ALWAYS read `dataset_path`, `target_col`, and `test_path` from `config.yaml` using `yaml.safe_load(open("config.yaml"))`.
+- ALWAYS read `dataset_path`, `target_col`, and `test_path` from the configuration file.
+- Support a `--config` command-line argument (using `argparse`) to specify the configuration file path (defaulting to `config.yaml`).
 - NEVER hardcode column names (like "Survived") or file paths (like "data/titanic/train.csv").
 - Use the `target_col` variable from the config for all target-related operations, including the submission file column name.
+
+MODELING FREEDOM: You are NOT restricted to the current model setup (e.g., CatBoost). 
+- You are encouraged to change the model architecture, introduce ensembling (using `VotingClassifier`/`Regressor` or `StackingClassifier`/`Regressor`), or try different frameworks (XGBoost, LightGBM, CatBoost, H2O AutoML) to improve the score.
+- You can add feature engineering, handle missing values better, and tune hyperparameters.
 
 You have access to the following machine learning frameworks:
 - XGBoost (`XGBClassifier`, `XGBRegressor`)

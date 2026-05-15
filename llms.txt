@@ -25,7 +25,8 @@ Before proposing code edits, you MUST read and strictly adhere to the instructio
 - Kaggle test datasets do not contain target labels. When `test_path` is set in `config.yaml`, the generated script appends a submission block. 
 - Because the `Pipeline` handles all preprocessing, the script simply passes the raw `test_df` directly into `pipeline.predict()` or `pipeline.predict_proba()`.
 - The LLM must maintain this `Pipeline` architecture and submission logic if it rewrites the script.
-- **Dataset Agnosticism**: The generated `train_model.py` MUST NOT hardcode dataset-specific paths or column names. It must read `dataset_path`, `target_col`, and `test_path` from `config.yaml` at runtime.
+- **Dataset Agnosticism**: The generated `train_model.py` MUST NOT hardcode dataset-specific paths or column names. It must read `dataset_path`, `target_col`, and `test_path` from the configuration file at runtime and support a `--config` argument.
+- **Modeling Freedom**: The agent is encouraged to completely change the model setup in `train_model.py`. While the baseline provides a starting point (e.g., an ensemble or a single model), the agent can replace it with any combination of XGBoost, LightGBM, CatBoost, or H2O AutoML, including complex stacking or voting ensembles, to maximize the score.
 
 ## 4. Modeling & Metric Constraints
 - All pipeline inputs are configured via `config.yaml`, not argparse. Always refer to `config.yaml` to understand the active dataset paths and metric settings.
