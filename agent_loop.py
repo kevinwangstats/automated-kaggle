@@ -2,6 +2,7 @@ import os
 import json
 import re
 import subprocess
+import yaml
 from litellm import completion
 from logger import log_stage, log_error, log_metric
 from git_manager import GitManager
@@ -38,8 +39,6 @@ def run_training_script(script_path="train_model.py", timeout: int = 600, config
         raise RuntimeError(f"Script Execution Failed:\n{result.stderr}")
         
     # Attempt to format submission if it exists, only if auto_kaggle_submit is true
-    import yaml
-    import os
     auto_submit = False
     if os.path.exists(config_path):
         try:
