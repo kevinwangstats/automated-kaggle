@@ -6,8 +6,7 @@ from sklearn.impute import SimpleImputer
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import roc_auc_score
-from sklearn.ensemble import StackingClassifier
-from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import VotingClassifier
 from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
 from catboost import CatBoostClassifier
@@ -40,22 +39,29 @@ def train_and_evaluate():
 
     # 2. Feature Engineering
     def feature_engineer(df, training_data_stats=None):
-        # Create a dictionary to store stats from training data if not provided
         if training_data_stats is None:
             training_data_stats = {}
 
         # Impute Embarked with mode
         if 'embarked_mode' not in training_data_stats:
             training_data_stats['embarked_mode'] = df['Embarked'].mode()[0]
-        df['Embarked'].fillna(training_data_stats['embarked_mode'], inplace=True)
+        df['Embarked'] = df['Embarked'].fillna(training_data_stats['embarked_mode'])
 
         # Impute Fare with median
         if 'fare_median' not in training_data_stats:
             training_data_stats['fare_median'] = df['Fare'].median()
-        df['Fare'].fillna(training_data_stats['fare_median'], inplace=True)
+        df['Fare'] = df['Fare'].fillna(training_data_stats['fare_median'])
         
-        # Log transform Fare to reduce skewness
+        # Create FamilySize and IsAlone features
+        df['FamilySize'] = df['SibSp'] + df['Parch'] + 1
+        df['IsAlone'] = (df['FamilySize'] == 1).astype(int)
+
+        # New Feature: Fare per Person (before log transform)
+        df['Fare_per_Person'] = df['Fare'] / (df['FamilySize'] + 1e-6)
+
+        # Log transform skewed features
         df['Fare'] = np.log1p(df['Fare'])
+        df['Fare_per_Person'] = np.log1p(df['Fare_per_Person'])
 
         # Extract Title from Name
         df['Title'] = df['Name'].str.extract(' ([A-Za-z]+)\.', expand=False)
@@ -63,13 +69,6 @@ def train_and_evaluate():
         df['Title'] = df['Title'].replace('Mlle', 'Miss')
         df['Title'] = df['Title'].replace('Ms', 'Miss')
         df['Title'] = df['Title'].replace('Mme', 'Mrs')
-
-        # Create FamilySize and IsAlone features
-        df['FamilySize'] = df['SibSp'] + df['Parch'] + 1
-        df['IsAlone'] = (df['FamilySize'] == 1).astype(int)
-
-        # Extract Deck from Cabin
-        df['Deck'] = df['Cabin'].apply(lambda s: s[0] if pd.notnull(s) else 'U')
 
         # Impute Age based on the median age for each Title
         if 'title_age_median' not in training_data_stats:
@@ -80,23 +79,26 @@ def train_and_evaluate():
             lambda row: title_age_map.get(row['Title']) if pd.isnull(row['Age']) else row['Age'],
             axis=1
         )
-        # Fallback for any titles in test set not in train set
-        if df['Age'].isnull().any():
-            if 'global_age_median' not in training_data_stats:
-                training_data_stats['global_age_median'] = df['Age'].median()
-            df['Age'].fillna(training_data_stats['global_age_median'], inplace=True)
+        # Global median as a fallback for any titles not seen in training
+        if 'global_age_median' not in training_data_stats:
+            training_data_stats['global_age_median'] = df['Age'].median()
+        df['Age'] = df['Age'].fillna(training_data_stats['global_age_median'])
 
         # New Feature: Age * Pclass
         df['Age_Pclass'] = df['Age'] * df['Pclass']
+        
+        # New Feature: Cabin Known (strong signal)
+        df['Cabin_Known'] = (df['Cabin'].notnull()).astype(int)
 
-        # New Feature: Ticket Prefix
-        def get_ticket_prefix(ticket):
-            ticket = ticket.replace('.', '').replace('/', '').split()
-            prefix = [t for t in ticket if not t.isdigit()]
-            if not prefix:
-                return 'X'
-            return ''.join(prefix)
-        df['Ticket_Prefix'] = df['Ticket'].apply(get_ticket_prefix)
+        # Extract Deck from Cabin and group rare decks
+        df['Deck'] = df['Cabin'].apply(lambda s: s[0] if pd.notnull(s) else 'U')
+        if 'deck_map' not in training_data_stats:
+            # Grouping rare decks
+            training_data_stats['deck_map'] = {'A': 'ABC', 'B': 'ABC', 'C': 'ABC', 'D': 'DE', 'E': 'DE', 'F': 'FG', 'G': 'FG', 'T': 'U'}
+        df['Deck'] = df['Deck'].map(training_data_stats['deck_map']).fillna('U')
+
+        # New Feature: Sex_Pclass interaction
+        df['Sex_Pclass'] = df['Sex'].astype(str) + "_" + df['Pclass'].astype(str)
 
         # Drop original/unnecessary columns
         df = df.drop(['Name', 'Ticket', 'Cabin', 'SibSp', 'Parch'], axis=1)
@@ -129,21 +131,21 @@ def train_and_evaluate():
         remainder='passthrough'
     )
 
-    # 4. Model Initialization (with tuned hyperparameters)
-    # Using slightly more complex models with lower learning rate
+    # 4. Model Initialization (Tuned for speed and performance)
     xgb_params = {
-        'n_estimators': 500, 'learning_rate': 0.02, 'max_depth': 4,
+        'n_estimators': 400, 'learning_rate': 0.03, 'max_depth': 3,
         'subsample': 0.8, 'colsample_bytree': 0.8, 'random_state': 42,
-        'use_label_encoder': False, 'eval_metric': 'logloss', 'n_jobs': -1
+        'use_label_encoder': False, 'eval_metric': 'logloss', 'n_jobs': -1,
+        'gamma': 0.1
     }
     lgb_params = {
-        'n_estimators': 500, 'learning_rate': 0.02, 'num_leaves': 20,
-        'max_depth': 4, 'subsample': 0.8, 'colsample_bytree': 0.8,
+        'n_estimators': 400, 'learning_rate': 0.03, 'num_leaves': 15,
+        'max_depth': 3, 'subsample': 0.8, 'colsample_bytree': 0.8,
         'random_state': 42, 'n_jobs': -1, 'verbose': -1, 'reg_alpha': 0.1, 'reg_lambda': 0.1
     }
     cat_params = {
-        'iterations': 500, 'learning_rate': 0.02, 'depth': 4,
-        'l2_leaf_reg': 4, 'random_state': 42, 'verbose': 0,
+        'iterations': 400, 'learning_rate': 0.03, 'depth': 3,
+        'l2_leaf_reg': 5, 'random_state': 42, 'verbose': 0,
         'loss_function': 'Logloss'
     }
 
@@ -151,28 +153,24 @@ def train_and_evaluate():
     clf2 = LGBMClassifier(**lgb_params)
     clf3 = CatBoostClassifier(**cat_params)
     
-    # Define base estimators for Stacking
+    # Define base estimators for Voting
     estimators = [
         ('xgb', clf1),
         ('lgb', clf2),
         ('cat', clf3)
     ]
 
-    # Define meta-classifier
-    meta_classifier = LogisticRegression(C=1.0, random_state=42)
-
-    # Create the StackingClassifier
-    stacker = StackingClassifier(
+    # Use a VotingClassifier for faster ensembling
+    voter = VotingClassifier(
         estimators=estimators,
-        final_estimator=meta_classifier,
-        cv=KFold(n_splits=5, shuffle=True, random_state=1), # Internal CV for stacking
-        stack_method='predict_proba',
+        voting='soft',
+        weights=[0.35, 0.35, 0.30], # Giving slightly more weight to XGB and LGBM
         n_jobs=-1
     )
 
     # 5. Create Full Pipeline
     pipeline = Pipeline(steps=[('preprocessor', preprocessor),
-                               ('classifier', stacker)])
+                               ('classifier', voter)])
     
     # 6. Cross Validation
     cv = KFold(n_splits=5, shuffle=True, random_state=42)
@@ -191,7 +189,7 @@ def train_and_evaluate():
     pipeline.fit(X, y)
     
     # Ensure test columns match train columns before prediction
-    # This is handled by the feature engineering function and pipeline
+    test_X = test_X[X.columns]
     
     preds = pipeline.predict_proba(test_X)[:, 1]
             
