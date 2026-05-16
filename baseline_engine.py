@@ -81,16 +81,11 @@ def train_and_evaluate(config_path="config.yaml"):
     )
 
     # 3. Model Initialization (Multi-Model Ensemble)
-    models = []
+    {init_block}
+    if not models: raise RuntimeError("No models could be initialized.")
     if task == 'classification':
-{model_init_classification}
-        
-        if not models: raise RuntimeError("No models could be initialized.")
         ensemble = VotingClassifier(estimators=models, voting='soft')
     else:
-{model_init_regression}
-        
-        if not models: raise RuntimeError("No models could be initialized.")
         ensemble = VotingRegressor(estimators=models)
 
     # 4. Create Full Pipeline
@@ -214,8 +209,10 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
             # Initialize models from registry
             try:
                 with open("models_registry.yaml", "r") as f:
-                    registry = yaml.safe_load(f).get("models", {})
-                for m_name, m_config in registry.items():
+                    registry = yaml.safe_load(f)
+                    if not registry or 'models' not in registry:
+                        registry = {'models': {}}
+                for m_name, m_config in registry['models'].items():
                     try:
                         exec(m_config["imports"])
                         model_str = m_config["classifier"] if task == 'classification' else m_config["regressor"]
@@ -316,3 +313,4 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
     except Exception as e:
         log_error("Baseline evaluation failed", e)
         raise
+

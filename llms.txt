@@ -13,7 +13,7 @@ Before proposing code edits, you MUST read and strictly adhere to the instructio
 - The entry point is `main.py`.
 - It triggers `eda_engine.py` to generate `EDA.md`.
 - `baseline_engine.py` runs basic models (XGBoost, LightGBM, CatBoost, H2O AutoML) via K-Fold CV to establish initial performance.
-- Crucially, `baseline_engine.py` then writes a `train_model.py` template that ensembles XGBoost, LightGBM, and CatBoost (omitting H2O due to ensemble compatibility issues) using a scikit-learn `Pipeline`.
+- Crucially, `baseline_engine.py` then writes a `train_model.py` template that ensembles the dynamically loaded models from `models_registry.yaml` using a scikit-learn `Pipeline`.
 - `agent_loop.py` takes control. It reads `EDA.md` and the current `train_model.py`.
 - The agent loop calls `litellm` to rewrite `train_model.py` to optimize the pipeline.
 - The new script is executed in an isolated `subprocess.run` with a strict timeout.
@@ -34,6 +34,7 @@ Before proposing code edits, you MUST read and strictly adhere to the instructio
 - Scikit-learn normalizes regression metrics to be "negative" (e.g., `neg_mean_squared_error`). Therefore, mathematically, a *higher* score is always better (closer to 0).
 - The `agent_loop.py` explicitly relies on this fact: `higher_is_better` is generally treated as `True` for raw sklearn scores.
 - When adding features, prioritize standard scikit-learn compatible wrappers.
+- The framework uses a Configuration-Driven Model Registry (models_registry.yaml). The baseline engine dynamically builds ensembles based on this file. When editing train_model.py, the agent should utilize the models defined in this registry.
 
 ## 5. Formatting, Tracking & Logging Strict Rules
 - **`CHANGELOG.md`**: Must only contain successful iterations. It must follow a markdown bullet format: `- **Iter <N>**: Score <score> (Commit: <id>)`. Do not bloat this file with verbose logging.
@@ -53,4 +54,4 @@ Before proposing code edits, you MUST read and strictly adhere to the instructio
 
 ## 7. CI/CD Pipeline
 - `.github/workflows/titanic_ci.yml` is a GitHub Actions workflow that triggers on every push/PR to `main`.
-- It tests the EDA and Baseline engines using `iterations: 0` without triggering any LLM calls.
+- It tests the EDA and Baseline engines using `iterations: 0` without triggering any LLM calls.tions: 0` without triggering any LLM calls.

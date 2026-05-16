@@ -147,11 +147,7 @@ MODELING FREEDOM: You are NOT restricted to the current model setup (e.g., CatBo
 - You are encouraged to change the model architecture, introduce ensembling (using `VotingClassifier`/`Regressor` or `StackingClassifier`/`Regressor`), or try different frameworks (XGBoost, LightGBM, CatBoost, H2O AutoML) to improve the score.
 - You can add feature engineering, handle missing values better, and tune hyperparameters.
 
-You have access to the following machine learning frameworks:
-- XGBoost (`XGBClassifier`, `XGBRegressor`)
-- LightGBM (`LGBMClassifier`, `LGBMRegressor`)
-- CatBoost (`CatBoostClassifier`, `CatBoostRegressor`)
-- H2O AutoML (`H2OAutoMLClassifier`, `H2OAutoMLRegressor`)
+You have access to the following pre-configured models from the registry: {available_models}. You may tune their hyperparameters, but do not hallucinate imports for models outside of this list unless you are confident they are in the environment.
 
 You should try tuning hyperparameters for these models, comparing their individual performance, or ensembling them (e.g., using `VotingClassifier`/`VotingRegressor` or `StackingClassifier`/`StackingRegressor`) to maximize the cross-validation score.
 
@@ -298,3 +294,4 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. D
 
     log_stage("Agentic Loop Finished")
     log_metric("Final Best Score", current_best_score)
+
