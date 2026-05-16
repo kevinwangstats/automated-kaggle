@@ -75,7 +75,7 @@ def train_and_evaluate(config_path="config.yaml"):
     preprocessor = ColumnTransformer(
         transformers=[
             ('num', 'passthrough', numerical_features),
-            ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features)
+            ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), categorical_features)
         ],
         remainder='passthrough'
     )
@@ -194,7 +194,7 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
         preprocessor = ColumnTransformer(
             transformers=[
                 ('num', 'passthrough', numerical_features),
-                ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features)
+                ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), categorical_features)
             ],
             remainder='passthrough'
         )
