@@ -114,7 +114,7 @@ def main():
             task = 'classification' if y.nunique() < 20 else 'regression'
         else:
             # Phase 1: EDA
-            eda_path = perform_eda(dataset_path)
+            eda_path = perform_eda(dataset_path, target_col)
 
             # Phase 2: Baseline
             base_score, script_path, task = evaluate_baselines(
