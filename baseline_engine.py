@@ -27,6 +27,7 @@ from sklearn.ensemble import VotingClassifier, VotingRegressor
 from xgboost import XGBRegressor, XGBClassifier
 from lightgbm import LGBMRegressor, LGBMClassifier
 from catboost import CatBoostRegressor, CatBoostClassifier
+from tqdm import tqdm
 
 def load_config(config_path="config.yaml"):
     with open(config_path, "r") as f:
@@ -101,8 +102,31 @@ def train_and_evaluate(config_path="config.yaml"):
     cv = KFold(n_splits=5, shuffle=True, random_state=42)
     scoring = {metric_str}
     
-    # Using n_jobs=1 because H2O and CatBoost have internal parallelism
-    scores = cross_val_score(pipeline, X, y, cv=cv, scoring=scoring, n_jobs=1)
+    print(f"Running Cross-Validation (folds=5)...")
+    scores = []
+    # Manual loop to show progress
+    for train_idx, val_idx in tqdm(list(cv.split(X, y)), desc="CV Progress"):
+        X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+        y_train, y_val = y[train_idx], y[val_idx]
+        
+        from sklearn.base import clone
+        fold_pipeline = clone(pipeline)
+        fold_pipeline.fit(X_train, y_train)
+        
+        # Scoring
+        if task == 'classification':
+            if scoring == 'roc_auc':
+                from sklearn.metrics import roc_auc_score
+                y_pred = fold_pipeline.predict_proba(X_val)[:, 1]
+                score = roc_auc_score(y_val, y_pred)
+            else:
+                from sklearn.metrics import get_scorer
+                score = get_scorer(scoring)(fold_pipeline, X_val, y_val)
+        else:
+            from sklearn.metrics import get_scorer
+            score = get_scorer(scoring)(fold_pipeline, X_val, y_val)
+            
+        scores.append(score)
 
     final_score = np.mean(scores)
     with open("metrics.json", "w") as f:
@@ -184,6 +208,7 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
         models_to_eval = {}
         
         from sklearn.pipeline import Pipeline
+        from tqdm import tqdm
 
         with suppress_stdout_stderr():
             # Initialize models
@@ -211,7 +236,9 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
                 models_to_eval['h2o'] = h2o_model
             except Exception: pass
 
-            for m_name, model in models_to_eval.items():
+            pbar = tqdm(models_to_eval.items(), desc="Evaluating Baselines")
+            for m_name, model in pbar:
+                pbar.set_description(f"Evaluating {m_name.upper()}")
                 try:
                     pipeline = Pipeline(steps=[('preprocessor', preprocessor), ('classifier', model)])
                     n_jobs = 1 if m_name == 'h2o' else -1

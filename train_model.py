@@ -11,6 +11,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import make_scorer, roc_auc_score, mean_squared_error
 from catboost import CatBoostRegressor, CatBoostClassifier
+from tqdm import tqdm
 
 def load_config(config_path="config.yaml"):
     with open(config_path, "r") as f:
@@ -69,7 +70,29 @@ def train_and_evaluate(config_path="config.yaml"):
     cv = KFold(n_splits=5, shuffle=True, random_state=42)
     scoring = 'roc_auc' if task == 'classification' else 'neg_mean_squared_error'
     
-    scores = cross_val_score(pipeline, X, y, cv=cv, scoring=scoring, n_jobs=-1)
+    print(f"Running Cross-Validation (folds=5)...")
+    scores = []
+    # Manual loop for progress
+    for train_idx, val_idx in tqdm(list(cv.split(X, y)), desc="CV Progress"):
+        X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+        y_train, y_val = y[train_idx], y[val_idx]
+        
+        from sklearn.base import clone
+        fold_pipeline = clone(pipeline)
+        fold_pipeline.fit(X_train, y_train)
+        
+        if task == 'classification':
+            if scoring == 'roc_auc':
+                from sklearn.metrics import roc_auc_score
+                y_pred = fold_pipeline.predict_proba(X_val)[:, 1]
+                score = roc_auc_score(y_val, y_pred)
+            else:
+                from sklearn.metrics import get_scorer
+                score = get_scorer(scoring)(fold_pipeline, X_val, y_val)
+        else:
+            from sklearn.metrics import get_scorer
+            score = get_scorer(scoring)(fold_pipeline, X_val, y_val)
+        scores.append(score)
 
     final_score = np.mean(scores)
     print(f"FINAL_CV_SCORE: {final_score:.4f}")
