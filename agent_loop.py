@@ -141,6 +141,7 @@ CRITICAL: Your script MUST remain dataset-agnostic.
 - Support a `--config` command-line argument (using `argparse`) to specify the configuration file path (defaulting to `config.yaml`).
 - NEVER hardcode column names (like "Survived") or file paths (like "data/titanic/train.csv").
 - Use the `target_col` variable from the config for all target-related operations, including the submission file column name.
+- When reading the dataset, you MUST preserve the `nrows=...` argument in `pd.read_csv` to prevent Out-Of-Memory crashes during evaluation.
 
 MODELING FREEDOM: You are NOT restricted to the current model setup (e.g., CatBoost). 
 - You are encouraged to change the model architecture, introduce ensembling (using `VotingClassifier`/`Regressor` or `StackingClassifier`/`Regressor`), or try different frameworks (XGBoost, LightGBM, CatBoost, H2O AutoML) to improve the score.

@@ -26,6 +26,7 @@ def main():
         timeout = config.get('timeout', 600)
         model = config.get('model', None)
         ollama_base_url = config.get('ollama_base_url', None)
+        max_rows = config.get('max_rows', 100000)
         
         wandb_config = config.get('wandb', {})
         wandb_enabled = wandb_config.get('enabled', False)
@@ -87,7 +88,8 @@ def main():
                     "target_col": target_col,
                     "metric": metric,
                     "iterations": iterations,
-                    "model": model
+                    "model": model,
+                    "max_rows": max_rows
                 }
             }
             
@@ -109,12 +111,12 @@ def main():
             base_score = None
             
             # Determine task
-            df = pd.read_csv(dataset_path)
+            df = pd.read_csv(dataset_path, nrows=max_rows)
             y = df[target_col].dropna()
             task = 'classification' if y.nunique() < 20 else 'regression'
         else:
             # Phase 1: EDA
-            eda_path = perform_eda(dataset_path, target_col)
+            eda_path = perform_eda(dataset_path, target_col, max_rows=max_rows)
 
             # Phase 2: Baseline
             base_score, script_path, task = evaluate_baselines(
@@ -124,7 +126,8 @@ def main():
                 custom_metric=metric,
                 wandb_enabled=wandb_enabled,
                 wandb_project=wandb_project,
-                wandb_entity=wandb_entity
+                wandb_entity=wandb_entity,
+                max_rows=max_rows
             )
             
             # Initial commit to secure baseline state

@@ -4,10 +4,10 @@ from logger import log_stage, log_error
 import os
 import numpy as np
 
-def perform_eda(dataset_path: str, target_col: str, output_path: str = "EDA.md"):
+def perform_eda(dataset_path: str, target_col: str, output_path: str = "EDA.md", max_rows: int = None):
     log_stage("Enhanced Automated EDA")
     try:
-        df = pd.read_csv(dataset_path)
+        df = pd.read_csv(dataset_path, nrows=max_rows)
         
         if target_col not in df.columns:
             raise ValueError(f"Target column '{target_col}' not found in dataset.")

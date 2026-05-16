@@ -44,7 +44,8 @@ Before proposing code edits, you MUST read and strictly adhere to the instructio
 - LightGBM models must always be initialized with `verbose=-1` to suppress C++ backend warnings.
 
 ## 6. Configuration & Environment Variables
-- All pipeline inputs (`dataset_path`, `target_col`, `test_path`, `metric`, `iterations`, `timeout`) are defined in `config.yaml`.
+- All pipeline inputs (`dataset_path`, `target_col`, `test_path`, `metric`, `iterations`, `timeout`, `max_rows`) are defined in `config.yaml`.
+- The agent must respect the `max_rows` limit when writing data ingestion logic in `train_model.py` to ensure scalable execution on large datasets.
 - `main.py` accepts a single `--config` argument pointing to a YAML file (default: `config.yaml`).
 - The `-y` flag skips per-LLM-call confirmation prompts.
 - `AUTOML_MODEL`: Determines the Litellm routing model.

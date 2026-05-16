@@ -7,9 +7,10 @@ from logger import log_stage, log_metric, log_error, suppress_stdout_stderr
 import os
 import re
 
-def create_template_script(dataset_path: str, target_col: str, best_model_name: str, test_path: str = None, custom_metric: str = None) -> str:
+def create_template_script(dataset_path: str, target_col: str, best_model_name: str, test_path: str = None, custom_metric: str = None, max_rows: int = None) -> str:
     
     metric_str = f"'{custom_metric}'" if custom_metric else "('roc_auc' if task == 'classification' else 'neg_mean_squared_error')"
+    nrows_str = f"nrows={max_rows}" if max_rows is not None else "nrows=None"
 
     script = f'''import pandas as pd
 import numpy as np
@@ -40,7 +41,7 @@ def train_and_evaluate(config_path="config.yaml"):
     target_col = config.get("target_col")
     test_path = config.get("test_path")
 
-    df = pd.read_csv(dataset_path)
+    df = pd.read_csv(dataset_path, {nrows_str})
     
     # Basic Preprocessing
     df = df.dropna(subset=[target_col])
@@ -164,10 +165,10 @@ if __name__ == "__main__":
     return script
 
 
-def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None, custom_metric: str = None, wandb_enabled: bool = False, wandb_project: str = None, wandb_entity: str = None):
+def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None, custom_metric: str = None, wandb_enabled: bool = False, wandb_project: str = None, wandb_entity: str = None, max_rows: int = None):
     log_stage("Baseline Evaluation")
     try:
-        df = pd.read_csv(dataset_path)
+        df = pd.read_csv(dataset_path, nrows=max_rows)
         if target_col not in df.columns:
             raise ValueError(f"Target column '{target_col}' not found in dataset.")
             
@@ -307,7 +308,7 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
             wandb.log({"cv_score": best_score, "best_model": best_model, "iteration": 0})
         
         # Generate the script for the best model
-        script_content = create_template_script(dataset_path, target_col, best_model, test_path, custom_metric)
+        script_content = create_template_script(dataset_path, target_col, best_model, test_path, custom_metric, max_rows)
         with open("train_model.py", "w") as f:
             f.write(script_content)
             
