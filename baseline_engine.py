@@ -8,7 +8,17 @@ import os
 import re
 
 def create_template_script(dataset_path: str, target_col: str, best_model_name: str, test_path: str = None, custom_metric: str = None, max_rows: int = None) -> str:
-    
+    import yaml
+    try:
+        with open("models_registry.yaml", "r") as f:
+            registry = yaml.safe_load(f).get("models", {})
+    except Exception:
+        registry = {}
+
+    imports_str = "\n".join([m["imports"] for m in registry.values()])
+    model_init_classification = "\n".join([f"        try: models.append(('{k}', {v['classifier']}))\n        except Exception: pass" for k, v in registry.items()])
+    model_init_regression = "\n".join([f"        try: models.append(('{k}', {v['regressor']}))\n        except Exception: pass" for k, v in registry.items()])
+
     metric_str = f"'{custom_metric}'" if custom_metric else "('roc_auc' if task == 'classification' else 'neg_mean_squared_error')"
     nrows_str = f"nrows={max_rows}" if max_rows is not None else "nrows=None"
 
@@ -25,9 +35,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import make_scorer, roc_auc_score, mean_squared_error
 from sklearn.ensemble import VotingClassifier, VotingRegressor
-from xgboost import XGBRegressor, XGBClassifier
-from lightgbm import LGBMRegressor, LGBMClassifier
-from catboost import CatBoostRegressor, CatBoostClassifier
+{imports_str}
 from tqdm import tqdm
 
 def load_config(config_path="config.yaml"):
@@ -75,22 +83,12 @@ def train_and_evaluate(config_path="config.yaml"):
     # 3. Model Initialization (Multi-Model Ensemble)
     models = []
     if task == 'classification':
-        try: models.append(('xgb', XGBClassifier(random_state=42)))
-        except NameError: pass
-        try: models.append(('lgb', LGBMClassifier(random_state=42, verbose=-1)))
-        except NameError: pass
-        try: models.append(('cat', CatBoostClassifier(random_state=42, verbose=0)))
-        except NameError: pass
+{model_init_classification}
         
         if not models: raise RuntimeError("No models could be initialized.")
         ensemble = VotingClassifier(estimators=models, voting='soft')
     else:
-        try: models.append(('xgb', XGBRegressor(random_state=42)))
-        except NameError: pass
-        try: models.append(('lgb', LGBMRegressor(random_state=42, verbose=-1)))
-        except NameError: pass
-        try: models.append(('cat', CatBoostRegressor(random_state=42, verbose=0)))
-        except NameError: pass
+{model_init_regression}
         
         if not models: raise RuntimeError("No models could be initialized.")
         ensemble = VotingRegressor(estimators=models)
@@ -211,20 +209,21 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
         from sklearn.pipeline import Pipeline
         from tqdm import tqdm
 
+        import yaml
         with suppress_stdout_stderr():
-            # Initialize models
+            # Initialize models from registry
             try:
-                from xgboost import XGBRegressor, XGBClassifier
-                models_to_eval['xgb'] = XGBClassifier(random_state=42) if task == 'classification' else XGBRegressor(random_state=42)
-            except Exception: pass
-            try:
-                from lightgbm import LGBMRegressor, LGBMClassifier
-                models_to_eval['lgb'] = LGBMClassifier(random_state=42, verbose=-1) if task == 'classification' else LGBMRegressor(random_state=42, verbose=-1)
-            except Exception: pass
-            try:
-                from catboost import CatBoostRegressor, CatBoostClassifier
-                models_to_eval['cat'] = CatBoostClassifier(random_state=42, verbose=0) if task == 'classification' else CatBoostRegressor(random_state=42, verbose=0)
-            except Exception: pass
+                with open("models_registry.yaml", "r") as f:
+                    registry = yaml.safe_load(f).get("models", {})
+                for m_name, m_config in registry.items():
+                    try:
+                        exec(m_config["imports"])
+                        model_str = m_config["classifier"] if task == 'classification' else m_config["regressor"]
+                        models_to_eval[m_name] = eval(model_str)
+                    except Exception as e:
+                        pass
+            except Exception:
+                pass
 
             # H2O is kept here for evaluation, but omitted from the generated ensemble script
             try:
