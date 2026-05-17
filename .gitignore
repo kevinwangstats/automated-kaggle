@@ -224,3 +224,4 @@ data/*
 wandb/*
 catboost_info/*
 settings.json
+wandb_run_id.txt
