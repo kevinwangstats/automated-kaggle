@@ -11,13 +11,22 @@ def create_template_script(dataset_path: str, target_col: str, best_model_name: 
     import yaml
     try:
         with open("models_registry.yaml", "r") as f:
-            registry = yaml.safe_load(f).get("models", {})
+            registry = yaml.safe_load(f)
+            if not registry or 'models' not in registry:
+                registry = {'models': {}}
     except Exception:
-        registry = {}
+        registry = {'models': {}}
 
-    imports_str = "\n".join([m["imports"] for m in registry.values()])
-    model_init_classification = "\n".join([f"        try: models.append(('{k}', {v['classifier']}))\n        except Exception: pass" for k, v in registry.items()])
-    model_init_regression = "\n".join([f"        try: models.append(('{k}', {v['regressor']}))\n        except Exception: pass" for k, v in registry.items()])
+    imports_str = "\n".join([cfg["imports"] for cfg in registry['models'].values()])
+
+    init_block = "models = []\n"
+    for name, cfg in registry['models'].items():
+        init_block += f"    try:\n"
+        init_block += f"        if task == 'classification':\n"
+        init_block += f"            models.append(('{name}', {cfg['classifier']}))\n"
+        init_block += f"        else:\n"
+        init_block += f"            models.append(('{name}', {cfg['regressor']}))\n"
+        init_block += f"    except Exception: pass\n"
 
     metric_str = f"'{custom_metric}'" if custom_metric else "('roc_auc' if task == 'classification' else 'neg_mean_squared_error')"
     nrows_str = f"nrows={max_rows}" if max_rows is not None else "nrows=None"
