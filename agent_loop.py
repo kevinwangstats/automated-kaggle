@@ -27,7 +27,7 @@ def run_training_script(script_path="train_model.py", timeout: int = 600, config
     # Run the script as a subprocess
     try:
         result = subprocess.run(
-            ["python", script_path],
+            ["python", script_path, "--config", config_path],
             capture_output=True,
             text=True,
             timeout=timeout
@@ -136,11 +136,18 @@ def run_agent_loop(
 
         prompt = f"""You are an expert AI Data Scientist. Your goal is to improve the Cross-Validation score of the model.
 
-You have access to the following machine learning frameworks:
-- XGBoost (`XGBClassifier`, `XGBRegressor`)
-- LightGBM (`LGBMClassifier`, `LGBMRegressor`)
-- CatBoost (`CatBoostClassifier`, `CatBoostRegressor`)
-- H2O AutoML (`H2OAutoMLClassifier`, `H2OAutoMLRegressor`)
+CRITICAL: Your script MUST remain dataset-agnostic. 
+- ALWAYS read `dataset_path`, `target_col`, and `test_path` from the configuration file.
+- Support a `--config` command-line argument (using `argparse`) to specify the configuration file path (defaulting to `config.yaml`).
+- NEVER hardcode column names (like "Survived") or file paths (like "data/titanic/train.csv").
+- Use the `target_col` variable from the config for all target-related operations, including the submission file column name.
+- When reading the dataset, you MUST preserve the `nrows=...` argument in `pd.read_csv` to prevent Out-Of-Memory crashes during evaluation.
+
+MODELING FREEDOM: You are NOT restricted to the current model setup (e.g., CatBoost). 
+- You are encouraged to change the model architecture, introduce ensembling (using `VotingClassifier`/`Regressor` or `StackingClassifier`/`Regressor`), or try different frameworks (XGBoost, LightGBM, CatBoost, H2O AutoML) to improve the score.
+- You can add feature engineering, handle missing values better, and tune hyperparameters.
+
+You have access to the following pre-configured models from the registry: {available_models}. You may tune their hyperparameters, but do not hallucinate imports for models outside of this list unless you are confident they are in the environment.
 
 You should try tuning hyperparameters for these models, comparing their individual performance, or ensembling them (e.g., using `VotingClassifier`/`VotingRegressor` or `StackingClassifier`/`StackingRegressor`) to maximize the cross-validation score.
 
@@ -287,3 +294,4 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. D
 
     log_stage("Agentic Loop Finished")
     log_metric("Final Best Score", current_best_score)
+

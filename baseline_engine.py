@@ -7,27 +7,58 @@ from logger import log_stage, log_metric, log_error, suppress_stdout_stderr
 import os
 import re
 
-def create_template_script(dataset_path: str, target_col: str, best_model_name: str, test_path: str = None, custom_metric: str = None) -> str:
-    
+def create_template_script(dataset_path: str, target_col: str, best_model_name: str, test_path: str = None, custom_metric: str = None, max_rows: int = None) -> str:
+    import yaml
+    try:
+        with open("models_registry.yaml", "r") as f:
+            registry = yaml.safe_load(f)
+            if not registry or 'models' not in registry:
+                registry = {'models': {}}
+    except Exception:
+        registry = {'models': {}}
+
+    imports_str = "\n".join([cfg["imports"] for cfg in registry['models'].values()])
+
+    init_block = "models = []\n"
+    for name, cfg in registry['models'].items():
+        init_block += f"    try:\n"
+        init_block += f"        if task == 'classification':\n"
+        init_block += f"            models.append(('{name}', {cfg['classifier']}))\n"
+        init_block += f"        else:\n"
+        init_block += f"            models.append(('{name}', {cfg['regressor']}))\n"
+        init_block += f"    except Exception: pass\n"
+
     metric_str = f"'{custom_metric}'" if custom_metric else "('roc_auc' if task == 'classification' else 'neg_mean_squared_error')"
+    nrows_str = f"nrows={max_rows}" if max_rows is not None else "nrows=None"
 
     script = f'''import pandas as pd
 import numpy as np
+import yaml
+import json
+import os
+import re
+import argparse
 from sklearn.model_selection import KFold, cross_val_score
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import make_scorer, roc_auc_score, mean_squared_error
 from sklearn.ensemble import VotingClassifier, VotingRegressor
-from xgboost import XGBRegressor, XGBClassifier
-from lightgbm import LGBMRegressor, LGBMClassifier
-from catboost import CatBoostRegressor, CatBoostClassifier
-import re
+{imports_str}
+from tqdm import tqdm
 
-def train_and_evaluate():
-    # 1. Load Data
-    df = pd.read_csv("{dataset_path}")
-    target_col = "{target_col}"
+def load_config(config_path="config.yaml"):
+    with open(config_path, "r") as f:
+        return yaml.safe_load(f)
+
+def train_and_evaluate(config_path="config.yaml"):
+    # 1. Load Configuration & Data
+    config = load_config(config_path)
+    dataset_path = config.get("dataset_path")
+    target_col = config.get("target_col")
+    test_path = config.get("test_path")
+
+    df = pd.read_csv(dataset_path, {nrows_str})
     
     # Basic Preprocessing
     df = df.dropna(subset=[target_col])
@@ -53,32 +84,17 @@ def train_and_evaluate():
     preprocessor = ColumnTransformer(
         transformers=[
             ('num', 'passthrough', numerical_features),
-            ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features)
+            ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), categorical_features)
         ],
         remainder='passthrough'
     )
 
     # 3. Model Initialization (Multi-Model Ensemble)
-    models = []
+    {init_block}
+    if not models: raise RuntimeError("No models could be initialized.")
     if task == 'classification':
-        try: models.append(('xgb', XGBClassifier(random_state=42)))
-        except NameError: pass
-        try: models.append(('lgb', LGBMClassifier(random_state=42, verbose=-1)))
-        except NameError: pass
-        try: models.append(('cat', CatBoostClassifier(random_state=42, verbose=0)))
-        except NameError: pass
-        
-        if not models: raise RuntimeError("No models could be initialized.")
         ensemble = VotingClassifier(estimators=models, voting='soft')
     else:
-        try: models.append(('xgb', XGBRegressor(random_state=42)))
-        except NameError: pass
-        try: models.append(('lgb', LGBMRegressor(random_state=42, verbose=-1)))
-        except NameError: pass
-        try: models.append(('cat', CatBoostRegressor(random_state=42, verbose=0)))
-        except NameError: pass
-        
-        if not models: raise RuntimeError("No models could be initialized.")
         ensemble = VotingRegressor(estimators=models)
 
     # 4. Create Full Pipeline
@@ -89,20 +105,41 @@ def train_and_evaluate():
     cv = KFold(n_splits=5, shuffle=True, random_state=42)
     scoring = {metric_str}
     
-    # Using n_jobs=1 because H2O and CatBoost have internal parallelism
-    scores = cross_val_score(pipeline, X, y, cv=cv, scoring=scoring, n_jobs=1)
+    print(f"Running Cross-Validation (folds=5)...")
+    scores = []
+    # Manual loop to show progress
+    for train_idx, val_idx in tqdm(list(cv.split(X, y)), desc="CV Progress"):
+        X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+        y_train, y_val = y[train_idx], y[val_idx]
+        
+        from sklearn.base import clone
+        fold_pipeline = clone(pipeline)
+        fold_pipeline.fit(X_train, y_train)
+        
+        # Scoring
+        if task == 'classification':
+            if scoring == 'roc_auc':
+                from sklearn.metrics import roc_auc_score
+                y_pred = fold_pipeline.predict_proba(X_val)[:, 1]
+                score = roc_auc_score(y_val, y_pred)
+            else:
+                from sklearn.metrics import get_scorer
+                score = get_scorer(scoring)(fold_pipeline, X_val, y_val)
+        else:
+            from sklearn.metrics import get_scorer
+            score = get_scorer(scoring)(fold_pipeline, X_val, y_val)
+            
+        scores.append(score)
 
     final_score = np.mean(scores)
-    import json
     with open("metrics.json", "w") as f:
         json.dump({{"cv_score": final_score}}, f)
 
     # 6. Generate Submission (if test_path is provided)
-
-    if "{test_path}":
+    if test_path and os.path.exists(test_path):
         print("Generating submission...")
         pipeline.fit(X, y)
-        test_df = pd.read_csv("{test_path}")
+        test_df = pd.read_csv(test_path)
         
         # Ensure test columns match train columns before preprocessing
         test_X = test_df[X.columns.intersection(test_df.columns)]
@@ -113,24 +150,27 @@ def train_and_evaluate():
             preds = pipeline.predict(test_X)
             
         submission = pd.DataFrame()
-        if len(test_df.columns) > 0 and test_df.columns[0] in test_df:
+        if len(test_df.columns) > 0:
              submission[test_df.columns[0]] = test_df.iloc[:, 0]
-        submission['{target_col}'] = preds
+        submission[target_col] = preds
         submission.to_csv("raw_submission.csv", index=False)
         print("Saved raw_submission.csv")
 
     return final_score
 
 if __name__ == "__main__":
-    train_and_evaluate()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str, default="config.yaml", help="Path to config file")
+    args = parser.parse_args()
+    train_and_evaluate(args.config)
 '''
     return script
 
 
-def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None, custom_metric: str = None, wandb_enabled: bool = False, wandb_project: str = None, wandb_entity: str = None):
+def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None, custom_metric: str = None, wandb_enabled: bool = False, wandb_project: str = None, wandb_entity: str = None, max_rows: int = None):
     log_stage("Baseline Evaluation")
     try:
-        df = pd.read_csv(dataset_path)
+        df = pd.read_csv(dataset_path, nrows=max_rows)
         if target_col not in df.columns:
             raise ValueError(f"Target column '{target_col}' not found in dataset.")
             
@@ -158,7 +198,7 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
         preprocessor = ColumnTransformer(
             transformers=[
                 ('num', 'passthrough', numerical_features),
-                ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features)
+                ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), categorical_features)
             ],
             remainder='passthrough'
         )
@@ -171,21 +211,25 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
         models_to_eval = {}
         
         from sklearn.pipeline import Pipeline
+        from tqdm import tqdm
 
+        import yaml
         with suppress_stdout_stderr():
-            # Initialize models
+            # Initialize models from registry
             try:
-                from xgboost import XGBRegressor, XGBClassifier
-                models_to_eval['xgb'] = XGBClassifier(random_state=42) if task == 'classification' else XGBRegressor(random_state=42)
-            except Exception: pass
-            try:
-                from lightgbm import LGBMRegressor, LGBMClassifier
-                models_to_eval['lgb'] = LGBMClassifier(random_state=42, verbose=-1) if task == 'classification' else LGBMRegressor(random_state=42, verbose=-1)
-            except Exception: pass
-            try:
-                from catboost import CatBoostRegressor, CatBoostClassifier
-                models_to_eval['cat'] = CatBoostClassifier(random_state=42, verbose=0) if task == 'classification' else CatBoostRegressor(random_state=42, verbose=0)
-            except Exception: pass
+                with open("models_registry.yaml", "r") as f:
+                    registry = yaml.safe_load(f)
+                    if not registry or 'models' not in registry:
+                        registry = {'models': {}}
+                for m_name, m_config in registry['models'].items():
+                    try:
+                        exec(m_config["imports"])
+                        model_str = m_config["classifier"] if task == 'classification' else m_config["regressor"]
+                        models_to_eval[m_name] = eval(model_str)
+                    except Exception as e:
+                        pass
+            except Exception:
+                pass
 
             # H2O is kept here for evaluation, but omitted from the generated ensemble script
             try:
@@ -198,7 +242,9 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
                 models_to_eval['h2o'] = h2o_model
             except Exception: pass
 
-            for m_name, model in models_to_eval.items():
+            pbar = tqdm(models_to_eval.items(), desc="Evaluating Baselines")
+            for m_name, model in pbar:
+                pbar.set_description(f"Evaluating {m_name.upper()}")
                 try:
                     pipeline = Pipeline(steps=[('preprocessor', preprocessor), ('classifier', model)])
                     n_jobs = 1 if m_name == 'h2o' else -1
@@ -267,7 +313,7 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
             wandb.log({"cv_score": best_score, "best_model": best_model, "iteration": 0})
         
         # Generate the script for the best model
-        script_content = create_template_script(dataset_path, target_col, best_model, test_path, custom_metric)
+        script_content = create_template_script(dataset_path, target_col, best_model, test_path, custom_metric, max_rows)
         with open("train_model.py", "w") as f:
             f.write(script_content)
             
@@ -276,3 +322,4 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
     except Exception as e:
         log_error("Baseline evaluation failed", e)
         raise
+

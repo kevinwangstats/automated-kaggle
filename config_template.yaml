@@ -8,6 +8,10 @@
 # For example, "data/titanic/train.csv" will use a branch named "titanic".
 dataset_path: "data/train.csv"
 
+# max_rows: Limits the number of rows loaded into memory to prevent OOM errors on large datasets.
+# Set to null or ~ to load all rows.
+max_rows: 100000
+
 # target_col: The exact name of the target/label column in your dataset.
 # This parameter is REQUIRED.
 target_col: "target"
