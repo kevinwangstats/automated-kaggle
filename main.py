@@ -149,8 +149,36 @@ def main():
             y = df[target_col].dropna()
             task = 'classification' if y.nunique() < 20 else 'regression'
             
-            # Human Intervention Logging
+            # Attempt to recover base_score from history, otherwise run the script once
             import json
+            history_path = workspace_mgr.get_file_path("history.json")
+            script_path = workspace_mgr.get_file_path("train_model.py")
+            if os.path.exists(history_path):
+                try:
+                    with open(history_path, "r") as f:
+                        prev_history = json.load(f)
+                    valid_scores = [r['score'] for r in prev_history if r.get('score') is not None]
+                    if valid_scores:
+                        base_score = max(valid_scores)
+                        print(f"[Info] Recovered best score from history: {base_score:.4f}")
+                except Exception:
+                    pass
+            
+            if base_score is None and os.path.exists(workspace_mgr.get_file_path("train_model.py")):
+                print("[Info] No valid scores in history. Running existing train_model.py to establish base score...")
+                try:
+                    base_score = run_training_script(
+                        script_path=workspace_mgr.get_file_path("train_model.py"),
+                        timeout=timeout,
+                        config_path=args.config,
+                        workspace_mgr=workspace_mgr
+                    )
+                    print(f"[Info] Established base score: {base_score:.4f}")
+                except Exception as e:
+                    log_error("Failed to establish base score from existing script", e)
+                    raise ValueError("Cannot resume: no valid base score in history and existing train_model.py failed to execute.") from e
+
+            # Human Intervention Logging
             history_path = workspace_mgr.get_file_path("history.json")
             script_path = workspace_mgr.get_file_path("train_model.py")
             if os.path.exists(history_path) and os.path.exists(script_path):
