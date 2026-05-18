@@ -143,69 +143,79 @@ def main():
             y = df[target_col].dropna()
             task = 'classification' if y.nunique() < 20 else 'regression'
             
-            # Attempt to recover base_score from history, otherwise run the script once
             import json
+            import re
             history_path = workspace_mgr.get_file_path("history.json")
             script_path = workspace_mgr.get_file_path("train_model.py")
+            
+            history = []
             if os.path.exists(history_path):
                 try:
                     with open(history_path, "r") as f:
-                        prev_history = json.load(f)
-                    valid_scores = [r['score'] for r in prev_history if r.get('score') is not None]
-                    if valid_scores:
-                        base_score = max(valid_scores)
-                        print(f"[Info] Recovered best score from history: {base_score:.4f}")
+                        history = json.load(f)
                 except Exception:
                     pass
-            
-            if base_score is None and os.path.exists(workspace_mgr.get_file_path("train_model.py")):
-                print("[Info] No valid scores in history. Running existing train_model.py to establish base score...")
-                try:
-                    base_score = run_training_script(
-                        script_path=workspace_mgr.get_file_path("train_model.py"),
-                        timeout=timeout,
-                        config_path=args.config,
-                        workspace_mgr=workspace_mgr
-                    )
-                    print(f"[Info] Established base score: {base_score:.4f}")
-                except Exception as e:
-                    log_error("Failed to establish base score from existing script", e)
-                    raise ValueError("Cannot resume: no valid base score in history and existing train_model.py failed to execute.") from e
 
-            # Human Intervention Logging
-            history_path = workspace_mgr.get_file_path("history.json")
-            script_path = workspace_mgr.get_file_path("train_model.py")
-            if os.path.exists(history_path) and os.path.exists(script_path):
-                try:
-                    with open(history_path, "r") as f:
-                        history = json.load(f)
-                    with open(script_path, "r") as f:
-                        current_code = f.read().strip()
-                        
-                    if history:
-                        last_entry = history[-1]
-                        last_response = last_entry.get("response", "")
-                        
-                        import re
-                        match = re.search(r'```python\n(.*?)\n```', last_response, re.DOTALL)
-                        last_code = match.group(1).strip() if match else last_response.strip()
-                        
-                        if current_code != last_code:
-                            print("[Info] Detected manual modifications to train_model.py. Logging HUMAN_INTERVENTION to history.")
-                            synthetic_entry = {
-                                "iteration": len(history) + 1,
-                                "commit": git_mgr.get_current_commit() if had_commits else None,
-                                "score": None,
-                                "improved": False,
-                                "prompt": "HUMAN_INTERVENTION",
-                                "response": f"User manually modified train_model.py prior to resuming.\n\n```python\n{current_code}\n```",
-                                "error": None
-                            }
-                            history.append(synthetic_entry)
-                            with open(history_path, "w") as f:
-                                json.dump(history, f, indent=2)
-                except Exception as e:
-                    print(f"[Warning] Failed to verify human intervention: {e}")
+            current_code = ""
+            if os.path.exists(script_path):
+                with open(script_path, "r") as f:
+                    current_code = f.read().strip()
+                    
+            # 1. Detect if script was manually modified
+            is_modified = False
+            if history and current_code:
+                last_entry = history[-1]
+                last_response = last_entry.get("response", "")
+                
+                match = re.search(r'```python\n(.*?)\n```', last_response, re.DOTALL)
+                last_code = match.group(1).strip() if match else last_response.strip()
+                
+                if current_code != last_code:
+                    is_modified = True
+                    print("[Info] Detected manual modifications to train_model.py.")
+            
+            # 2. Always execute train_model.py as-is first
+            print("[Info] Executing existing train_model.py to establish current baseline score...")
+            try:
+                base_score = run_training_script(
+                    script_path=script_path,
+                    timeout=timeout,
+                    config_path=args.config,
+                    workspace_mgr=workspace_mgr
+                )
+                print(f"[Info] Established current score: {base_score:.4f}")
+            except Exception as e:
+                log_error("Failed to execute existing train_model.py", e)
+                raise ValueError("Cannot resume: existing train_model.py failed to execute.") from e
+
+            # 3. Log HUMAN_INTERVENTION if modified, now using the evaluated score
+            if is_modified:
+                print("[Info] Logging HUMAN_INTERVENTION to history with the evaluated score.")
+                valid_scores = [r['score'] for r in history if r.get('score') is not None]
+                prev_best = max(valid_scores) if valid_scores else float('-inf')
+                improved = (base_score > prev_best) if valid_scores else True
+
+                synthetic_entry = {
+                    "iteration": len(history) + 1,
+                    "commit": git_mgr.get_current_commit() if had_commits else None,
+                    "score": base_score,
+                    "improved": improved,
+                    "prompt": "HUMAN_INTERVENTION",
+                    "response": f"User manually modified train_model.py prior to resuming.\n\n```python\n{current_code}\n```",
+                    "error": None
+                }
+                history.append(synthetic_entry)
+                with open(history_path, "w") as f:
+                    json.dump(history, f, indent=2)
+                
+                if improved and had_commits:
+                    commit_msg = f"[Iter {len(history)} | CV Score: {base_score:.4f}] Manual Human Intervention"
+                    git_mgr.commit_all(commit_msg)
+                    try:
+                        with open("CHANGELOG.md", "a") as f:
+                            f.write(f"\n- **Iter {len(history)}**: Score {base_score:.4f} (Commit: {git_mgr.get_current_commit()}) [MANUAL]\n")
+                    except Exception:
+                        pass
         else:
             # Phase 1: EDA
             eda_path = perform_eda(dataset_path, target_col, max_rows=max_rows, workspace_mgr=workspace_mgr)
