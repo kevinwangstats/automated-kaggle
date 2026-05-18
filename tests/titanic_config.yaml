@@ -38,7 +38,7 @@ test_path: "data/titanic/test.csv"
 # If not set, it defaults to the AUTOML_MODEL environment variable or gemini-2.5-flash-lite.
 # model: ollama/qwen3.5:2b
 # model: gemini/gemini-2.5-flash-lite
-model: gemini/gemini-2.5-pro
+model: deepseek/deepseek-v4-pro
 
 # iterations: The maximum number of improvement cycles the Agentic LLM should perform.
 # In each iteration, the LLM analyzes previous results and proposes script modifications.
@@ -63,7 +63,7 @@ max_rows: ~
 # Prevents the pipeline from hanging on infinite loops or extremely slow training code.
 # Examples: 300, 600, 1200, 3600
 # Generous timeout for CI runners
-timeout: 60
+timeout: 300
 
 # --- KAGGLE SUBMISSION OPTIONS ---
 
