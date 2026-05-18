@@ -42,9 +42,39 @@ def main():
         dataset_branch = dataset_branch_from_dataset_path(dataset_path)
         
         workspace_root = config.get("workspace_root", ".workspaces")
+        run_mode = config.get("run_mode", "prompt")
+        
         from workspace_manager import WorkspaceManager
         workspace_mgr = WorkspaceManager(dataset_branch, root_dir=workspace_root)
         had_commits = bool(git_mgr.repo.heads)
+        
+        previous_workspace = workspace_mgr.get_previous_workspace()
+        has_previous_state = False
+        if previous_workspace:
+            if os.path.exists(os.path.join(previous_workspace, "history.json")) and os.path.exists(os.path.join(previous_workspace, "train_model.py")):
+                has_previous_state = True
+                
+        should_resume = args.resume
+        if has_previous_state and not args.resume:
+            if args.yes:
+                resolved_mode = "resume" if run_mode == "prompt" else run_mode
+                should_resume = (resolved_mode == "resume")
+                print(f"Skipping interactive prompt due to -y flag. Using fallback mode: {resolved_mode}")
+            else:
+                if run_mode == "resume":
+                    should_resume = True
+                elif run_mode == "scratch":
+                    should_resume = False
+                else:
+                    ans = input("[Warning] Previous iterations detected for this dataset. Do you want to resume from the existing train_model.py and history? (y/n): ")
+                    should_resume = (ans.lower() == 'y')
+                
+        if args.resume and not has_previous_state:
+            print("[Warning] --resume passed but no previous workspace state found. Falling back to start from scratch.")
+            should_resume = False
+            
+        if should_resume:
+            workspace_mgr.copy_from_previous(previous_workspace, ["history.json", "train_model.py", "EDA.md", "wandb_run_id.txt"])
         
         if had_commits and git_mgr.is_on_main() and dataset_branch != "main":
             if git_mgr.has_uncommitted_changes():
@@ -74,7 +104,7 @@ def main():
 
         if had_commits:
             git_mgr.ensure_dataset_branch(dataset_branch)
-            if not args.resume:
+            if not should_resume:
                 git_mgr.revert_changes()
 
         wandb_project = dataset_branch
@@ -97,7 +127,7 @@ def main():
                 }
             }
             
-            if args.resume and os.path.exists(run_id_file):
+            if should_resume and os.path.exists(run_id_file):
                 with open(run_id_file, "r") as f:
                     saved_run_id = f.read().strip()
                 if saved_run_id:
@@ -106,11 +136,11 @@ def main():
                     
             wandb.init(**init_kwargs)
             
-            if not args.resume or not os.path.exists(run_id_file):
+            if not should_resume or not os.path.exists(run_id_file):
                 with open(run_id_file, "w") as f:
                     f.write(wandb.run.id)
 
-        if args.resume:
+        if should_resume:
             print("Resuming from previous state. Skipping EDA and Baseline generation.")
             base_score = None
             
@@ -118,6 +148,42 @@ def main():
             df = pd.read_csv(dataset_path, nrows=max_rows)
             y = df[target_col].dropna()
             task = 'classification' if y.nunique() < 20 else 'regression'
+            
+            # Human Intervention Logging
+            import json
+            history_path = workspace_mgr.get_file_path("history.json")
+            script_path = workspace_mgr.get_file_path("train_model.py")
+            if os.path.exists(history_path) and os.path.exists(script_path):
+                try:
+                    with open(history_path, "r") as f:
+                        history = json.load(f)
+                    with open(script_path, "r") as f:
+                        current_code = f.read().strip()
+                        
+                    if history:
+                        last_entry = history[-1]
+                        last_response = last_entry.get("response", "")
+                        
+                        import re
+                        match = re.search(r'```python\n(.*?)\n```', last_response, re.DOTALL)
+                        last_code = match.group(1).strip() if match else last_response.strip()
+                        
+                        if current_code != last_code:
+                            print("[Info] Detected manual modifications to train_model.py. Logging HUMAN_INTERVENTION to history.")
+                            synthetic_entry = {
+                                "iteration": len(history) + 1,
+                                "commit": git_mgr.get_current_commit() if had_commits else None,
+                                "score": None,
+                                "improved": False,
+                                "prompt": "HUMAN_INTERVENTION",
+                                "response": f"User manually modified train_model.py prior to resuming.\n\n```python\n{current_code}\n```",
+                                "error": None
+                            }
+                            history.append(synthetic_entry)
+                            with open(history_path, "w") as f:
+                                json.dump(history, f, indent=2)
+                except Exception as e:
+                    print(f"[Warning] Failed to verify human intervention: {e}")
         else:
             # Phase 1: EDA
             eda_path = perform_eda(dataset_path, target_col, max_rows=max_rows, workspace_mgr=workspace_mgr)

@@ -19,6 +19,10 @@
 # Examples: ".workspaces", "/tmp/automl_workspaces"
 workspace_root: ".workspaces"
 
+# run_mode: Determines behavior if previous state is detected ("resume", "scratch", or "prompt").
+# "prompt" asks interactively. Overridden by --resume CLI flag. Defaults to "prompt".
+run_mode: "prompt"
+
 # dataset_path: The relative path to the training dataset CSV file.
 # This parameter is REQUIRED.
 # It also determines the Git branch name used for experiments. 
