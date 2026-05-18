@@ -1,5 +1,8 @@
 # Agentic AutoML Tabular Pipeline Rules
 
+## Workspace Paradigm
+The pipeline uses a `WorkspaceManager`. All ephemeral files (`train_model.py`, `metrics.json`, `history.json`, `EDA.md`, `raw_submission.csv`) are isolated inside a unique `.workspaces/` subdirectory created at runtime. The agent MUST NEVER write output files or scripts to the repository root. All file I/O operations must be relative to the provided workspace context.
+
 You are working in a Python-based template repository designed for autonomous, agentic modeling on Kaggle Tabular data challenges. This project uses `litellm` combined with pure Python orchestration and Git-based strict code provenance.
 
 Before proposing code edits, you MUST read and strictly adhere to the instructions found in this document.

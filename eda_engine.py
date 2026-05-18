@@ -4,7 +4,7 @@ from logger import log_stage, log_error
 import os
 import numpy as np
 
-def perform_eda(dataset_path: str, target_col: str, output_path: str = "EDA.md", max_rows: int = None):
+def perform_eda(dataset_path: str, target_col: str, output_path: str = "EDA.md", max_rows: int = None, workspace_mgr=None):
     log_stage("Enhanced Automated EDA")
     try:
         df = pd.read_csv(dataset_path, nrows=max_rows)
@@ -98,6 +98,9 @@ def perform_eda(dataset_path: str, target_col: str, output_path: str = "EDA.md",
         ]
 
         
+        if workspace_mgr:
+            output_path = workspace_mgr.get_file_path(output_path)
+            
         with open(output_path, "w") as f:
             f.write("\n".join(eda_content))
             

@@ -19,15 +19,21 @@ def read_file(filepath: str) -> str:
     with open(filepath, 'r') as f:
         return f.read()
 
-def run_training_script(script_path="train_model.py", timeout: int = 600, config_path="config.yaml"):
+def run_training_script(script_path="train_model.py", timeout: int = 600, config_path="config.yaml", workspace_mgr=None):
     # Ensure no stale metrics exist
-    if os.path.exists("metrics.json"):
-        os.remove("metrics.json")
+    metrics_path = workspace_mgr.get_file_path("metrics.json") if workspace_mgr else "metrics.json"
+    if os.path.exists(metrics_path):
+        os.remove(metrics_path)
         
     # Run the script as a subprocess
     try:
+        cwd = workspace_mgr.workspace_dir if workspace_mgr else None
+        abs_config = os.path.abspath(config_path) if config_path else "config.yaml"
+        cmd_script = os.path.basename(script_path) if workspace_mgr else script_path
+        
         result = subprocess.run(
-            ["python", script_path, "--config", config_path],
+            ["python", cmd_script, "--config", abs_config],
+            cwd=cwd,
             capture_output=True,
             text=True,
             timeout=timeout
@@ -38,26 +44,12 @@ def run_training_script(script_path="train_model.py", timeout: int = 600, config
     if result.returncode != 0:
         raise RuntimeError(f"Script Execution Failed:\n{result.stderr}")
         
-    # Attempt to format submission if it exists, only if auto_kaggle_submit is true
-    auto_submit = False
-    if os.path.exists(config_path):
-        try:
-            with open(config_path, "r") as f:
-                cfg = yaml.safe_load(f)
-                auto_submit = cfg.get("auto_kaggle_submit", False)
-        except Exception:
-            pass
-            
-    # Always attempt to format the submission if it was generated
-    if os.path.exists("raw_submission.csv"):
-        subprocess.run(["python", "kaggle_submit.py", "--config", config_path, "--format-only"], capture_output=True)
-        
     # Parse final score from metrics.json
-    if not os.path.exists("metrics.json"):
+    if not os.path.exists(metrics_path):
         raise ValueError(f"Could not find metrics.json after script execution. Output was:\n{result.stdout}\n{result.stderr}")
         
     try:
-        with open("metrics.json", "r") as f:
+        with open(metrics_path, "r") as f:
             metrics = json.load(f)
         if "cv_score" not in metrics:
             raise ValueError(f"metrics.json missing 'cv_score' key: {metrics}")
@@ -82,7 +74,8 @@ def run_agent_loop(
     wandb_entity: str = None,
     pred_prob: bool = True,
     config_path: str = "config.yaml",
-    available_models: list = None
+    available_models: list = None,
+    workspace_mgr=None
 ):
     if available_models is None:
         available_models = []
@@ -90,10 +83,11 @@ def run_agent_loop(
     current_best_score = base_score
     history = []
     
+    history_path = workspace_mgr.get_file_path("history.json") if workspace_mgr else "history.json"
     # Load history if exists
-    if os.path.exists("history.json"):
+    if os.path.exists(history_path):
         try:
-            with open("history.json", "r") as f:
+            with open(history_path, "r") as f:
                 history = json.load(f)
                 
             if base_score is None and history:
@@ -107,7 +101,8 @@ def run_agent_loop(
     if current_best_score is None:
         raise ValueError("base_score was None and could not be determined from history.")
 
-    eda_content = read_file("EDA.md")
+    eda_path = workspace_mgr.get_file_path("EDA.md") if workspace_mgr else "EDA.md"
+    eda_content = read_file(eda_path)
     
     start_iteration = len(history) + 1
     end_iteration = start_iteration + max_iterations
@@ -120,7 +115,8 @@ def run_agent_loop(
         # so the LLM can read it and attempt to fix its own errors.
         git_mgr.checkout_branch(dataset_branch)
         
-        current_script = read_file("train_model.py")
+        script_path = workspace_mgr.get_file_path("train_model.py") if workspace_mgr else "train_model.py"
+        current_script = read_file(script_path)
         history_context = ""
         if len(history) > 0:
             last_run = history[-1]
@@ -225,13 +221,16 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. D
         if not llm_summary:
             llm_summary = "No reasoning provided by LLM."
         
-        # Write new code directly on the dataset branch
-        with open("train_model.py", "w") as f:
-            f.write(new_code)
+        # Write new code directly to workspace
+        if workspace_mgr:
+            workspace_mgr.write_file("train_model.py", new_code)
+        else:
+            with open("train_model.py", "w") as f:
+                f.write(new_code)
             
         try:
             log_stage(f"Evaluating Generated Code")
-            new_score = run_training_script("train_model.py", timeout=timeout, config_path=config_path)
+            new_score = run_training_script(script_path, timeout=timeout, config_path=config_path, workspace_mgr=workspace_mgr)
             log_metric("Iteration Score", new_score)
             
             higher_is_better = True
@@ -293,7 +292,7 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. D
                 "response": llm_output
             })
             
-        with open("history.json", "w") as f:
+        with open(history_path, "w") as f:
             json.dump(history, f, indent=2)
 
     log_stage("Agentic Loop Finished")

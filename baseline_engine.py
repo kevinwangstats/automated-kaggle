@@ -49,7 +49,13 @@ from tqdm import tqdm
 
 def load_config(config_path="config.yaml"):
     with open(config_path, "r") as f:
-        return yaml.safe_load(f)
+        config = yaml.safe_load(f)
+    base_dir = os.path.dirname(os.path.abspath(config_path))
+    if config.get("dataset_path") and not os.path.isabs(config.get("dataset_path")):
+        config["dataset_path"] = os.path.join(base_dir, config["dataset_path"])
+    if config.get("test_path") and not os.path.isabs(config.get("test_path")):
+        config["test_path"] = os.path.join(base_dir, config["test_path"])
+    return config
 
 def train_and_evaluate(config_path="config.yaml"):
     # 1. Load Configuration & Data
@@ -167,7 +173,7 @@ if __name__ == "__main__":
     return script
 
 
-def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None, custom_metric: str = None, wandb_enabled: bool = False, wandb_project: str = None, wandb_entity: str = None, max_rows: int = None):
+def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None, custom_metric: str = None, wandb_enabled: bool = False, wandb_project: str = None, wandb_entity: str = None, max_rows: int = None, workspace_mgr=None):
     log_stage("Baseline Evaluation")
     try:
         df = pd.read_csv(dataset_path, nrows=max_rows)
@@ -314,10 +320,15 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
         
         # Generate the script for the best model
         script_content = create_template_script(dataset_path, target_col, best_model, test_path, custom_metric, max_rows)
-        with open("train_model.py", "w") as f:
-            f.write(script_content)
+        if workspace_mgr:
+            workspace_mgr.write_file("train_model.py", script_content)
+            script_path = workspace_mgr.get_file_path("train_model.py")
+        else:
+            with open("train_model.py", "w") as f:
+                f.write(script_content)
+            script_path = "train_model.py"
             
-        return best_score, "train_model.py", task
+        return best_score, script_path, task
 
     except Exception as e:
         log_error("Baseline evaluation failed", e)
