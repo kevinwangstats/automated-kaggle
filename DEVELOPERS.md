@@ -7,54 +7,69 @@ This document contains the technical details, architectural decisions, and devel
 The system consists of the following core components:
 
 1. **EDA Engine**: Automatically performs Exploratory Data Analysis on a given dataset and outputs a concise `EDA.md` summary for the LLM context.
-2. **Baseline Engine**: Evaluates standard frameworks (XGBoost, LightGBM, CatBoost, H2O AutoML) using K-Fold Cross-Validation to establish a baseline performance. It then generates an initial `train_model.py` template that initializes and ensembles XGBoost, LightGBM, and CatBoost (using a `VotingClassifier` or `VotingRegressor`) as a starting point for the agent. **Crucially, `train_model.py` is an ephemeral file**; even if an old version exists from a previous run or a different dataset, it will be completely overwritten by the newly generated ensemble script when the pipeline starts. For binary classification tasks, it automatically generates detailed out-of-fold metrics including Accuracy, F1 Score, Sensitivity, Specificity, and Positive/Negative case counts.
+2. **Baseline Engine**: Evaluates standard frameworks (XGBoost, LightGBM, CatBoost, H2O AutoML, etc.) using K-Fold Cross-Validation to establish a baseline performance. It then generates an initial `train_model.py` template that initializes and ensembles the models defined in `models_registry.yaml` (e.g., XGBoost, LightGBM, CatBoost, HistGradientBoosting) using a `VotingClassifier` or `VotingRegressor` as a starting point for the agent. **Crucially, `train_model.py` is an ephemeral file**; even if an old version exists from a previous run or a different dataset, it will be completely overwritten by the newly generated ensemble script when the pipeline starts. For binary classification tasks, it automatically generates detailed out-of-fold metrics including Accuracy, F1 Score, Sensitivity, Specificity, and Positive/Negative case counts.
  For multi-class tasks, it provides Accuracy, Macro/Micro F1 Scores, and class distribution counts.
 3. **Agent Loop**: An orchestrator powered by `litellm` that feeds the dataset context, current code, and performance history to an LLM. The LLM edits the Python training script directly on the dataset branch to improve the cross-validation score. If an iteration succeeds, it is immediately committed. If an iteration fails (due to timeout or error), the broken code is retained uncommitted in the working directory so the next iteration can attempt to fix it.
 4. **Git Manager**: Ensures strict provenance. All dataset-specific work runs on a dedicated dataset branch. Successful iterations are directly committed and tracked.
 5. **Resume & Continuity**: The pipeline supports a `--resume` flag that bypasses the EDA and Baseline engines to prevent overwriting existing progress. It parses `history.json` to calculate the starting iteration and current best score, and reloads the Weights & Biases run ID from `wandb_run_id.txt` to ensure metrics plot on a continuous timeline.
 
-## Git Branches and Provenance
+## Git Branches and Worktree Architecture
 
-This project enforces a strictly data-agnostic workflow. The core codebase remains on `main`, while data-specific iterations and configurations are isolated to dataset branches. All actual dataset files are ignored by git.
+This project enforces a strictly data-agnostic workflow using **Git Worktrees**. The core codebase remains on `main` in the primary repository directory, while data-specific iterations and configurations are isolated to dataset branches checked out into parallel sibling directories.
 
-Here is the structural mapping of how files and branches interact:
+### Physical Directory Layout
 
 ```text
-automated-kaggle/
-├── [Branch: main] Core Files (Project-Agnostic)
+/your-projects/
+├── automated-kaggle/             [Branch: main] Primary Repo (Core Engine)
 │   ├── main.py
-│   ├── config.yaml (default template)
 │   ├── agent_loop.py
-│   ├── baseline_engine.py
-│   ├── eda_engine.py
-│   ├── git_manager.py
-│   └── logger.py
+│   └── baseline_engine.py
 │
-├── [Branch: <dataset>] Data-Specific Output (Derived from dataset folder)
-│   ├── train_model.py (generated)
-│   ├── EDA.md (generated)
-│   ├── config.yaml (dataset-specific tweaks)
-│   ├── history.json
-│   └── CHANGELOG.md
+├── automated-kaggle-titanic/     [Branch: titanic] Worktree (Dataset Experiment)
+│   ├── train_model.py
+│   ├── config.yaml
+│   └── history.json
 │
-└── data/ (Git-ignored entirely except .gitkeep)
-    ├── .gitkeep
-    ├── titanic/          --> Maps to branch "titanic"
-    │   ├── train.csv     (Untracked)
-    │   └── test.csv      (Untracked)
-    └── my-competition/   --> Maps to branch "my-competition"
-        └── train.csv     (Untracked)
+└── automated-kaggle-spaceship/   [Branch: spaceship] Worktree (Dataset Experiment)
+    ├── train_model.py
+    └── ...
 ```
 
-- **`main`**: Keep shared **backbone** here (orchestration, engines, generic defaults). Avoid landing competition-specific artifacts on `main` when you can keep them on a dataset branch instead.
-- **Dataset branch**: Derived from `dataset_path` in `config.yaml`. Examples:
-  - `data/titanic/train.csv` → branch **`titanic`**
-  - `data/my-competition/train.csv` → **`my-competition`**
-  - `data/train.csv` (file directly under `data/`) → branch named from the file stem, e.g. **`train`**
+### Working with New Datasets
 
-When you run the pipeline, it checks out `main`, syncs branches, then creates or checks out the dataset branch. Baseline and agent commits go directly to the **dataset** branch. Failed experiments simply leave the file changes uncommitted in the working directory for the next iteration to debug.
+To start a new competition or dataset experiment without cluttering the `main` branch or switching context manually:
 
-On a **brand-new** repository with no commits yet, the first baseline commit still creates `main`; the pipeline then creates the dataset branch at the same commit and continues there so later work stays off `main` until you merge intentionally.
+1.  **Create a new branch** from `main`:
+    ```bash
+    git branch my-new-dataset
+    ```
+
+2.  **Initialize a new Worktree** in a sibling folder:
+    ```bash
+    git worktree add ../automated-kaggle-my-new-dataset my-new-dataset
+    ```
+
+3.  **Setup and Run**:
+    ```bash
+    cd ../automated-kaggle-my-new-dataset
+    # Add your data files to the local data/ folder (git-ignored)
+    # Edit config.yaml for this specific dataset
+    python main.py
+    ```
+
+4.  **Sync with Core Engine**:
+    If updates are made to the core engine on the `main` branch, merge them into your dataset worktree:
+    ```bash
+    # Inside the dataset worktree directory:
+    git merge main
+    ```
+
+- **`main`**: Shared **backbone** (orchestration, engines, generic defaults).
+- **Dataset Worktree**: Isolated environment for a specific competition. All generated files (`train_model.py`, `EDA.md`, `history.json`) stay here, safely separated from the core engine.
+
+When the pipeline runs within a worktree, the `git_manager.py` respects the current branch context. All agent iterations are committed directly to the dataset branch within that worktree.
+
 
 ## CI/CD and Testing
 

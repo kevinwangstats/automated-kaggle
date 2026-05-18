@@ -94,7 +94,7 @@ def run_agent_loop(
                 history = json.load(f)
                 
             if base_score is None and history:
-                higher_is_better = (task == 'classification')
+                higher_is_better = True
                 valid_scores = [run['score'] for run in history if run.get('score') is not None]
                 if valid_scores:
                     current_best_score = max(valid_scores) if higher_is_better else min(valid_scores)
@@ -230,7 +230,7 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. D
             new_score = run_training_script("train_model.py", timeout=timeout, config_path=config_path)
             log_metric("Iteration Score", new_score)
             
-            higher_is_better = (task == 'classification')
+            higher_is_better = True
             
             improved = (new_score > current_best_score) if higher_is_better else (new_score < current_best_score)
             
