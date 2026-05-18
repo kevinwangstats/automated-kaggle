@@ -32,6 +32,7 @@ from sklearn.ensemble import (
     ExtraTreesRegressor,
 )
 from sklearn.svm import SVC, SVR
+from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 from xgboost import XGBClassifier, XGBRegressor
 from lightgbm import LGBMClassifier, LGBMRegressor
 from catboost import CatBoostClassifier, CatBoostRegressor
@@ -69,6 +70,56 @@ class RareCategoryGrouper(BaseEstimator, TransformerMixin):
             if col in self.frequent_cats_:
                 allowed = self.frequent_cats_[col]
                 X[col] = X[col].apply(lambda x: x if x in allowed else "Other")
+        return X
+
+
+class FamilyFeatures(BaseEstimator, TransformerMixin):
+    """Create family size and is_alone from SibSp and Parch."""
+
+    def __init__(self):
+        pass
+
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X):
+        X = pd.DataFrame(X).copy()
+        if "SibSp" in X.columns and "Parch" in X.columns:
+            X["family_size"] = X["SibSp"] + X["Parch"] + 1
+            X["is_alone"] = (X["family_size"] == 1).astype(int)
+        return X
+
+
+class TicketFrequencyEncoder(BaseEstimator, TransformerMixin):
+    """
+    Computes ticket frequency from the training set and maps it to both
+    train and test. Also calculates fare_per_person when Fare exists.
+    """
+
+    def __init__(self):
+        self.ticket_freq_map_ = None
+
+    def fit(self, X, y=None):
+        X = pd.DataFrame(X)
+        if "Ticket" in X.columns:
+            ticket_col = X["Ticket"].astype(str)
+            self.ticket_freq_map_ = ticket_col.value_counts().to_dict()
+        else:
+            self.ticket_freq_map_ = {}
+        return self
+
+    def transform(self, X):
+        X = pd.DataFrame(X).copy()
+        if "Ticket" in X.columns and self.ticket_freq_map_ is not None:
+            X["ticket_freq"] = (
+                X["Ticket"]
+                .astype(str)
+                .map(self.ticket_freq_map_)
+                .fillna(1)
+                .astype(int)
+            )
+            if "Fare" in X.columns:
+                X["fare_per_person"] = X["Fare"] / X["ticket_freq"].clip(lower=1)
         return X
 
 
@@ -131,6 +182,11 @@ def train_and_evaluate(config_path="config.yaml"):
     # Feature engineering (creates new features from existing object columns)
     X = engineer_features(X)
 
+    # Add family and ticket related features
+    X = FamilyFeatures().fit_transform(X)
+    tf_enc = TicketFrequencyEncoder()
+    X = tf_enc.fit_transform(X)
+
     # Ensure all object columns are strings (avoids mixed bool/str in OneHotEncoder)
     for col in X.select_dtypes(include=["object"]).columns:
         X[col] = X[col].astype(str)
@@ -153,7 +209,7 @@ def train_and_evaluate(config_path="config.yaml"):
     high_card_cols = [
         col
         for col in X.select_dtypes(include=["object"]).columns
-        if X[col].nunique() > 50
+        if X[col].nunique() > 100
     ]
     if high_card_cols:
         print(f"Dropping high-cardinality columns: {high_card_cols}")
@@ -164,19 +220,18 @@ def train_and_evaluate(config_path="config.yaml"):
     numerical_features = X.select_dtypes(include=np.number).columns.tolist()
 
     # Preprocessing pipelines
-    # Numeric: iterative imputation (better for missing patterns) + scaling
     numeric_transformer = Pipeline(
         [
             (
                 "imputer",
-                IterativeImputer(random_state=42, max_iter=10, initial_strategy="median"),
+                IterativeImputer(
+                    random_state=42, max_iter=10, initial_strategy="median"
+                ),
             ),
             ("scaler", StandardScaler()),
         ]
     )
 
-    # Categorical: simple imputation, rare grouping, then one-hot
-    # NO indicator to keep all columns string (avoids bool+str mix)
     categorical_transformer = Pipeline(
         [
             (
@@ -196,19 +251,21 @@ def train_and_evaluate(config_path="config.yaml"):
         remainder="passthrough",
     )
 
-    # Base models with improved hyperparameters
+    # ------------------------------------------------------------------------
+    # Base models – diverse set with tuned hyperparameters
+    # ------------------------------------------------------------------------
     models = []
 
     # XGBoost
     try:
         if task == "classification":
             xgb = XGBClassifier(
-                n_estimators=2000,
-                learning_rate=0.01,
+                n_estimators=1000,
+                learning_rate=0.05,
                 max_depth=3,
                 subsample=0.8,
-                colsample_bytree=0.8,
-                min_child_weight=3,
+                colsample_bytree=0.7,
+                min_child_weight=5,
                 reg_alpha=0.1,
                 reg_lambda=1.0,
                 random_state=42,
@@ -218,12 +275,12 @@ def train_and_evaluate(config_path="config.yaml"):
             )
         else:
             xgb = XGBRegressor(
-                n_estimators=2000,
-                learning_rate=0.01,
+                n_estimators=1000,
+                learning_rate=0.05,
                 max_depth=3,
                 subsample=0.8,
-                colsample_bytree=0.8,
-                min_child_weight=3,
+                colsample_bytree=0.7,
+                min_child_weight=5,
                 reg_alpha=0.1,
                 reg_lambda=1.0,
                 random_state=42,
@@ -237,11 +294,11 @@ def train_and_evaluate(config_path="config.yaml"):
     try:
         if task == "classification":
             lgb = LGBMClassifier(
-                n_estimators=2000,
-                learning_rate=0.01,
+                n_estimators=1000,
+                learning_rate=0.05,
                 num_leaves=31,
                 subsample=0.8,
-                colsample_bytree=0.8,
+                colsample_bytree=0.7,
                 min_child_samples=20,
                 reg_alpha=0.1,
                 reg_lambda=0.1,
@@ -251,11 +308,11 @@ def train_and_evaluate(config_path="config.yaml"):
             )
         else:
             lgb = LGBMRegressor(
-                n_estimators=2000,
-                learning_rate=0.01,
+                n_estimators=1000,
+                learning_rate=0.05,
                 num_leaves=31,
                 subsample=0.8,
-                colsample_bytree=0.8,
+                colsample_bytree=0.7,
                 min_child_samples=20,
                 reg_alpha=0.1,
                 reg_lambda=0.1,
@@ -271,19 +328,19 @@ def train_and_evaluate(config_path="config.yaml"):
     try:
         if task == "classification":
             cat = CatBoostClassifier(
-                iterations=2000,
-                learning_rate=0.01,
+                iterations=1000,
+                learning_rate=0.05,
                 depth=4,
-                l2_leaf_reg=3,
+                l2_leaf_reg=5,
                 random_seed=42,
                 verbose=0,
             )
         else:
             cat = CatBoostRegressor(
-                iterations=2000,
-                learning_rate=0.01,
+                iterations=1000,
+                learning_rate=0.05,
                 depth=4,
-                l2_leaf_reg=3,
+                l2_leaf_reg=5,
                 random_seed=42,
                 verbose=0,
             )
@@ -295,16 +352,16 @@ def train_and_evaluate(config_path="config.yaml"):
     try:
         if task == "classification":
             hist = HistGradientBoostingClassifier(
-                max_iter=2000,
-                learning_rate=0.01,
+                max_iter=1000,
+                learning_rate=0.05,
                 max_depth=4,
                 l2_regularization=0.1,
                 random_state=42,
             )
         else:
             hist = HistGradientBoostingRegressor(
-                max_iter=2000,
-                learning_rate=0.01,
+                max_iter=1000,
+                learning_rate=0.05,
                 max_depth=4,
                 l2_regularization=0.1,
                 random_state=42,
@@ -313,7 +370,7 @@ def train_and_evaluate(config_path="config.yaml"):
     except Exception as e:
         print(f"HistGradientBoosting not available: {e}")
 
-    # Random Forest & Extra Trees for diversity
+    # Random Forest & Extra Trees
     try:
         if task == "classification":
             rf = RandomForestClassifier(
@@ -350,7 +407,7 @@ def train_and_evaluate(config_path="config.yaml"):
     except Exception as e:
         print(f"Random Forest / ExtraTrees not available: {e}")
 
-    # SVM for extra diversity (scaled numeric features help)
+    # SVM with RBF kernel
     try:
         if task == "classification":
             svm = SVC(kernel="rbf", probability=True, random_state=42)
@@ -360,12 +417,39 @@ def train_and_evaluate(config_path="config.yaml"):
     except Exception as e:
         print(f"SVM not available: {e}")
 
+    # Logistic Regression (strong linear baseline)
+    try:
+        if task == "classification":
+            lr = LogisticRegression(
+                C=1.0, class_weight="balanced", max_iter=1000, random_state=42
+            )
+        else:
+            lr = None
+        if lr:
+            models.append(("lr", lr))
+    except Exception as e:
+        print(f"LogisticRegression not available: {e}")
+
+    # KNN (distance‑based, may help with local patterns)
+    try:
+        if task == "classification":
+            knn = KNeighborsClassifier(n_neighbors=11, weights="distance")
+        else:
+            knn = KNeighborsRegressor(n_neighbors=11, weights="distance")
+        models.append(("knn", knn))
+    except Exception as e:
+        print(f"KNN not available: {e}")
+
     if not models:
         raise RuntimeError("No models could be initialized.")
 
-    # Stacking ensemble with a regularized linear meta‑learner
+    # ------------------------------------------------------------------------
+    # Stacking ensemble with a regularized meta‑learner
+    # ------------------------------------------------------------------------
     if task == "classification":
-        final_estimator = LogisticRegression(C=0.1, max_iter=1000, random_state=42)
+        final_estimator = LogisticRegression(
+            C=0.1, class_weight="balanced", max_iter=1000, random_state=42
+        )
         ensemble = StackingClassifier(
             estimators=models,
             final_estimator=final_estimator,
@@ -386,19 +470,21 @@ def train_and_evaluate(config_path="config.yaml"):
         steps=[("preprocessor", preprocessor), ("estimator", ensemble)]
     )
 
+    # ------------------------------------------------------------------------
     # Cross-validation
+    # ------------------------------------------------------------------------
     cv = KFold(n_splits=5, shuffle=True, random_state=42)
     scores = []
 
     print("\nRunning 5‑fold CV...")
     for train_idx, val_idx in tqdm(list(cv.split(X, y)), desc="CV Progress"):
-        X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
-        y_train, y_val = y[train_idx], y[val_idx]
+        X_train_fold, X_val = X.iloc[train_idx], X.iloc[val_idx]
+        y_train_fold, y_val = y[train_idx], y[val_idx]
 
         from sklearn.base import clone
 
         fold_pipeline = clone(pipeline)
-        fold_pipeline.fit(X_train, y_train)
+        fold_pipeline.fit(X_train_fold, y_train_fold)
 
         if task == "classification":
             y_pred_proba = fold_pipeline.predict_proba(X_val)[:, 1]
@@ -415,27 +501,29 @@ def train_and_evaluate(config_path="config.yaml"):
     with open("metrics.json", "w") as f:
         json.dump({"cv_score": final_score}, f)
 
+    # ------------------------------------------------------------------------
     # Submission generation
+    # ------------------------------------------------------------------------
     if test_path and os.path.exists(test_path):
         print("\nGenerating submission...")
         pipeline.fit(X, y)
 
         test_df = pd.read_csv(test_path, nrows=None)
 
-        # Apply the same ID-like column removal
+        # Drop same ID‑like columns
         if id_cols:
             test_df = test_df.drop(
                 columns=[c for c in id_cols if c in test_df.columns], errors="ignore"
             )
 
-        # Apply same feature engineering
+        # Apply same engineering and transformations as training
         test_X = engineer_features(test_df)
+        test_X = FamilyFeatures().fit_transform(test_X)
+        test_X = tf_enc.transform(test_X)  # use fitted ticket frequencies
 
-        # Ensure string types to match training
         for col in test_X.select_dtypes(include=["object"]).columns:
             test_X[col] = test_X[col].astype(str)
 
-        # Drop the same columns as training (missing/constant and high-cardinality)
         test_X = test_X.drop(
             columns=[c for c in drop_cols if c in test_X.columns], errors="ignore"
         )
@@ -443,7 +531,7 @@ def train_and_evaluate(config_path="config.yaml"):
             columns=[c for c in high_card_cols if c in test_X.columns], errors="ignore"
         )
 
-        # Ensure columns align with training (only those used)
+        # Align columns with training (only common ones)
         common_cols = [c for c in X.columns if c in test_X.columns]
         if len(common_cols) < len(X.columns):
             missing = set(X.columns) - set(common_cols)
@@ -456,7 +544,6 @@ def train_and_evaluate(config_path="config.yaml"):
             preds = pipeline.predict(test_X)
 
         submission = pd.DataFrame()
-        # Use the first column of test data as id (if present) otherwise a simple index
         if len(test_df.columns) > 0:
             submission[test_df.columns[0]] = test_df.iloc[:, 0]
         else:
