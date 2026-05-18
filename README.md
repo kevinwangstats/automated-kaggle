@@ -115,7 +115,8 @@ This prevents accidentally overwriting manually optimized scripts. You can contr
 | `"resume"` | Always resume from existing state |
 | `"scratch"` | Always start fresh |
 
-If you manually edit `train_model.py` between runs and then resume, the pipeline will detect the change and log a `HUMAN_INTERVENTION` entry in `history.json` to preserve code provenance.
+**Important Note on Resuming:**
+When you resume an optimization session, the pipeline will **always execute your existing `train_model.py` as-is first** to establish an empirical cross-validation score. If you manually edit the script between runs, this guarantees your changes are properly evaluated, and the pipeline will automatically log a `HUMAN_INTERVENTION` entry in `history.json` featuring the updated code and its newly evaluated score. This ensures the LLM is always trying to beat a true, verified baseline.
 
 ## Outputs and Tracking
 
