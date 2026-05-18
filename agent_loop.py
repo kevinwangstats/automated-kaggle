@@ -31,9 +31,15 @@ def run_training_script(script_path="train_model.py", timeout: int = 600, config
         abs_config = os.path.abspath(config_path) if config_path else "config.yaml"
         cmd_script = os.path.basename(script_path) if workspace_mgr else script_path
         
+        # Pass REPO_ROOT so the generated script can resolve relative dataset paths
+        # against the repository root, not the workspace or config file directory.
+        env = os.environ.copy()
+        env["REPO_ROOT"] = os.getcwd()
+        
         result = subprocess.run(
             ["python", cmd_script, "--config", abs_config],
             cwd=cwd,
+            env=env,
             capture_output=True,
             text=True,
             timeout=timeout

@@ -40,18 +40,12 @@ jobs:
 
     - name: Verify Submission File
       run: |
-        # The submission file should be in data/titanic/submission.csv
-        # because example_submission is data/titanic/gender_submission.csv
-        SUB_FILE="data/titanic/submission.csv"
-        if [ ! -f "$SUB_FILE" ]; then
-          echo "Error: $SUB_FILE was not generated!"
-          # Fallback check in case config changed or logic failed
-          if [ -f "submission.csv" ]; then
-            echo "Warning: Found submission.csv in root instead of $SUB_FILE"
-            SUB_FILE="submission.csv"
-          else
-            exit 1
-          fi
+        # Submission file is now written into the isolated workspace directory
+        # e.g. .workspaces/titanic_20260518_184437/submission.csv
+        SUB_FILE=$(find .workspaces -name "submission.csv" -type f | head -n 1)
+        if [ -z "$SUB_FILE" ]; then
+          echo "Error: submission.csv was not found in any workspace!"
+          exit 1
         fi
         echo "Found submission file at $SUB_FILE. Checking contents..."
         head -n 5 "$SUB_FILE"
