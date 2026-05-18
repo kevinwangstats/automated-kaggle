@@ -510,7 +510,12 @@ def train_and_evaluate(config_path="config.yaml"):
 
         test_df = pd.read_csv(test_path, nrows=None)
 
-        # Drop same ID‑like columns
+        # Capture the original ID column for the submission file
+        # By convention, the first column of the test set is usually the ID
+        id_col_name = test_df.columns[0]
+        id_values = test_df.iloc[:, 0].values
+
+        # Drop same ID‑like columns from features
         if id_cols:
             test_df = test_df.drop(
                 columns=[c for c in id_cols if c in test_df.columns], errors="ignore"
@@ -543,12 +548,10 @@ def train_and_evaluate(config_path="config.yaml"):
         else:
             preds = pipeline.predict(test_X)
 
-        submission = pd.DataFrame()
-        if len(test_df.columns) > 0:
-            submission[test_df.columns[0]] = test_df.iloc[:, 0]
-        else:
-            submission["id"] = np.arange(len(preds))
-        submission[target_col] = preds
+        submission = pd.DataFrame({
+            id_col_name: id_values,
+            target_col: preds
+        })
 
         submission.to_csv("raw_submission.csv", index=False)
         print("Saved raw_submission.csv")

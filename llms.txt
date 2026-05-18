@@ -32,6 +32,7 @@ Before proposing code edits, you MUST read and strictly adhere to the instructio
 - Because the `Pipeline` handles all preprocessing, the script simply passes the raw `test_df` directly into `pipeline.predict()` or `pipeline.predict_proba()`.
 - The LLM must maintain this `Pipeline` architecture and submission logic if it rewrites the script.
 - **Dataset Agnosticism**: The generated `train_model.py` MUST NOT hardcode dataset-specific paths or column names. It must read `dataset_path`, `target_col`, and `test_path` from the configuration file at runtime and support a `--config` argument.
+- **ID Column Preservation**: When generating submissions, you MUST capture the original ID column (typically the first column of the test set) before dropping it from the feature set. Failure to do this often leads to "column shifting" where the ID column is replaced by feature data (like Pclass), causing incorrect submissions.
 - **Modeling Freedom**: The agent is encouraged to completely change the model setup in `train_model.py`. While the baseline provides a starting point (e.g., an ensemble or a single model), the agent can replace it with any combination of XGBoost, LightGBM, CatBoost, or H2O AutoML, including complex stacking or voting ensembles, to maximize the score.
 
 ## 4. Modeling & Metric Constraints
