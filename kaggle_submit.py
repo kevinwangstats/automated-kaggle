@@ -90,9 +90,10 @@ def format_submission(config_path="config.yaml"):
     final_sub.to_csv(output_path, index=False)
     print(f"[kaggle_submit] Saved final formatted submission to {output_path}")
 
-def submit_to_kaggle(config_path="config.yaml"):
+def submit_to_kaggle(config_path="config.yaml", commit_id=None):
     """
     Submits the formatted submission to Kaggle if auto_kaggle_submit is enabled.
+    Includes the git commit ID in the submission message for provenance.
     """
     import subprocess
     if not os.path.exists(config_path):
@@ -122,10 +123,20 @@ def submit_to_kaggle(config_path="config.yaml"):
         print(f"[kaggle_submit] Could not infer competition name from dataset_path: {dataset_path}")
         return
 
-    print(f"[kaggle_submit] Submitting to Kaggle competition: {competition_name}")
+    if not commit_id:
+        try:
+            commit_id = subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode('utf-8').strip()[:7]
+        except Exception:
+            commit_id = "unknown"
+    else:
+        commit_id = str(commit_id)[:7]
+
+    submission_message = f"Agentic AutoML Pipeline Submission (Commit: {commit_id})"
+
+    print(f"[kaggle_submit] Submitting to Kaggle competition: {competition_name} with message: '{submission_message}'")
     try:
         result = subprocess.run(
-            ["kaggle", "competitions", "submit", "-c", competition_name, "-f", sub_path, "-m", "Agentic AutoML Pipeline Submission"],
+            ["kaggle", "competitions", "submit", "-c", competition_name, "-f", sub_path, "-m", submission_message],
             capture_output=True,
             text=True
         )

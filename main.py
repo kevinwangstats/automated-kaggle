@@ -178,7 +178,9 @@ def main():
         import kaggle_submit
         log_stage("Final Kaggle Submission")
         kaggle_submit.format_submission(args.config)
-        kaggle_submit.submit_to_kaggle(args.config)
+        
+        current_commit_id = git_mgr.get_current_commit()
+        kaggle_submit.submit_to_kaggle(args.config, commit_id=current_commit_id)
         
         if wandb_enabled:
             wandb.finish()
