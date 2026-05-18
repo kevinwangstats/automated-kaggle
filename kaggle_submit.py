@@ -27,7 +27,7 @@ def get_submission_path(config):
             
     return output_path
 
-def format_submission(config_path="config.yaml"):
+def format_submission(config_path="config.yaml", workspace_mgr=None):
     """
     Reads raw_submission.csv and formats it into submission.csv based on config.
     Uses example_submission to infer target column and data types if available.
@@ -39,7 +39,7 @@ def format_submission(config_path="config.yaml"):
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
 
-    raw_sub_path = "raw_submission.csv"
+    raw_sub_path = workspace_mgr.get_file_path("raw_submission.csv") if workspace_mgr else "raw_submission.csv"
     if not os.path.exists(raw_sub_path):
         print(f"[kaggle_submit] {raw_sub_path} not found. Ensure the training script outputs this file.")
         return
@@ -86,11 +86,11 @@ def format_submission(config_path="config.yaml"):
             if pd.api.types.is_float_dtype(final_sub[target_col]) and final_sub[target_col].between(0, 1).all():
                 final_sub[target_col] = (final_sub[target_col] >= 0.5).astype(int)
 
-    output_path = get_submission_path(config)
+    output_path = workspace_mgr.get_file_path("submission.csv") if workspace_mgr else get_submission_path(config)
     final_sub.to_csv(output_path, index=False)
     print(f"[kaggle_submit] Saved final formatted submission to {output_path}")
 
-def submit_to_kaggle(config_path="config.yaml", commit_id=None):
+def submit_to_kaggle(config_path="config.yaml", commit_id=None, workspace_mgr=None):
     """
     Submits the formatted submission to Kaggle if auto_kaggle_submit is enabled.
     Includes the git commit ID in the submission message for provenance.
@@ -107,7 +107,7 @@ def submit_to_kaggle(config_path="config.yaml", commit_id=None):
         print("[kaggle_submit] auto_kaggle_submit is false or not set. Skipping automated Kaggle submission.")
         return
 
-    sub_path = get_submission_path(config)
+    sub_path = workspace_mgr.get_file_path("submission.csv") if workspace_mgr else get_submission_path(config)
     if not os.path.exists(sub_path):
         print(f"[kaggle_submit] {sub_path} not found. Cannot submit.")
         return

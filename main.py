@@ -40,6 +40,10 @@ def main():
         import pandas as pd
         git_mgr = GitManager()
         dataset_branch = dataset_branch_from_dataset_path(dataset_path)
+        
+        workspace_root = config.get("workspace_root", ".workspaces")
+        from workspace_manager import WorkspaceManager
+        workspace_mgr = WorkspaceManager(dataset_branch, root_dir=workspace_root)
         had_commits = bool(git_mgr.repo.heads)
         
         if had_commits and git_mgr.is_on_main() and dataset_branch != "main":
@@ -77,7 +81,7 @@ def main():
 
         if wandb_enabled:
             import wandb
-            run_id_file = "wandb_run_id.txt"
+            run_id_file = workspace_mgr.get_file_path("wandb_run_id.txt") if workspace_mgr else "wandb_run_id.txt"
             
             init_kwargs = {
                 "project": wandb_project,
@@ -116,7 +120,7 @@ def main():
             task = 'classification' if y.nunique() < 20 else 'regression'
         else:
             # Phase 1: EDA
-            eda_path = perform_eda(dataset_path, target_col, max_rows=max_rows)
+            eda_path = perform_eda(dataset_path, target_col, max_rows=max_rows, workspace_mgr=workspace_mgr)
 
             # Phase 2: Baseline
             base_score, script_path, task = evaluate_baselines(
@@ -127,7 +131,8 @@ def main():
                 wandb_enabled=wandb_enabled,
                 wandb_project=wandb_project,
                 wandb_entity=wandb_entity,
-                max_rows=max_rows
+                max_rows=max_rows,
+                workspace_mgr=workspace_mgr
             )
             
             # Initial commit to secure baseline state
@@ -163,24 +168,27 @@ def main():
             wandb_entity=wandb_entity,
             pred_prob=pred_prob,
             config_path=args.config,
-            available_models=available_models
+            available_models=available_models,
+            workspace_mgr=workspace_mgr
         )
         
         # Ensure we have a raw_submission.csv if we have a test_path
-        if test_path and not os.path.exists("raw_submission.csv"):
+        raw_sub_path = workspace_mgr.get_file_path("raw_submission.csv") if workspace_mgr else "raw_submission.csv"
+        if test_path and not os.path.exists(raw_sub_path):
             log_stage("Generating Baseline Submission")
             try:
-                run_training_script(timeout=timeout, config_path=args.config)
+                script_path = workspace_mgr.get_file_path("train_model.py") if workspace_mgr else "train_model.py"
+                run_training_script(script_path=script_path, timeout=timeout, config_path=args.config, workspace_mgr=workspace_mgr)
             except Exception as e:
                 log_error("Failed to generate baseline submission", e)
 
         # Phase 4: Automated Kaggle Submission
         import kaggle_submit
         log_stage("Final Kaggle Submission")
-        kaggle_submit.format_submission(args.config)
+        kaggle_submit.format_submission(args.config, workspace_mgr=workspace_mgr)
         
         current_commit_id = git_mgr.get_current_commit()
-        kaggle_submit.submit_to_kaggle(args.config, commit_id=current_commit_id)
+        kaggle_submit.submit_to_kaggle(args.config, commit_id=current_commit_id, workspace_mgr=workspace_mgr)
         
         if wandb_enabled:
             wandb.finish()

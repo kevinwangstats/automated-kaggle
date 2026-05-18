@@ -4,6 +4,11 @@
 
 # --- CORE REQUIRED SETTINGS ---
 
+# workspace_root: The directory where ephemeral pipeline files are isolated.
+# Isolating workspaces prevents cluttering the repository root.
+# Examples: ".workspaces", "/tmp/automl_workspaces"
+workspace_root: ".workspaces"
+
 # dataset_path: The relative path to the training dataset CSV file.
 # This parameter is REQUIRED.
 # It also determines the Git branch name used for experiments. 
