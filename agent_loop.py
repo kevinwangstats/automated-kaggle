@@ -148,6 +148,7 @@ CRITICAL: Your script MUST remain dataset-agnostic.
 - NEVER hardcode column names (like "Survived") or file paths (like "data/titanic/train.csv").
 - Use the `target_col` variable from the config for all target-related operations, including the submission file column name.
 - When reading the dataset, you MUST preserve the `nrows=...` argument in `pd.read_csv` to prevent Out-Of-Memory crashes during evaluation.
+- ID COLUMN PRESERVATION: When generating `raw_submission.csv`, you MUST capture the original ID column (typically the first column of the test set) before dropping it from the feature set. Failure to do this causes "column shifting" where the ID column is replaced by feature data, leading to invalid submissions.
 
 MODELING FREEDOM: You are NOT restricted to the current model setup (e.g., CatBoost). 
 - You are encouraged to change the model architecture, introduce ensembling (using `VotingClassifier`/`Regressor` or `StackingClassifier`/`Regressor`), or try different frameworks (XGBoost, LightGBM, CatBoost, H2O AutoML) to improve the score.
