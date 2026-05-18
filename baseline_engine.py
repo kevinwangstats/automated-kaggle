@@ -50,11 +50,13 @@ from tqdm import tqdm
 def load_config(config_path="config.yaml"):
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
-    base_dir = os.path.dirname(os.path.abspath(config_path))
+    # Resolve relative dataset paths against the repo root (passed via env var),
+    # NOT the config file directory, since configs may live in subdirectories.
+    repo_root = os.environ.get("REPO_ROOT", os.getcwd())
     if config.get("dataset_path") and not os.path.isabs(config.get("dataset_path")):
-        config["dataset_path"] = os.path.join(base_dir, config["dataset_path"])
+        config["dataset_path"] = os.path.join(repo_root, config["dataset_path"])
     if config.get("test_path") and not os.path.isabs(config.get("test_path")):
-        config["test_path"] = os.path.join(base_dir, config["test_path"])
+        config["test_path"] = os.path.join(repo_root, config["test_path"])
     return config
 
 def train_and_evaluate(config_path="config.yaml"):
