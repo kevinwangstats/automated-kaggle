@@ -48,11 +48,8 @@ def main():
         workspace_mgr = WorkspaceManager(dataset_branch, root_dir=workspace_root)
         had_commits = bool(git_mgr.repo.heads)
         
-        previous_workspace = workspace_mgr.get_previous_workspace()
-        has_previous_state = False
-        if previous_workspace:
-            if os.path.exists(os.path.join(previous_workspace, "history.json")) and os.path.exists(os.path.join(previous_workspace, "train_model.py")):
-                has_previous_state = True
+        # State detection: check the static workspace for existing artifacts
+        has_previous_state = workspace_mgr.file_exists("history.json") and workspace_mgr.file_exists("train_model.py")
                 
         should_resume = args.resume
         if has_previous_state and not args.resume:
@@ -72,9 +69,6 @@ def main():
         if args.resume and not has_previous_state:
             print("[Warning] --resume passed but no previous workspace state found. Falling back to start from scratch.")
             should_resume = False
-            
-        if should_resume:
-            workspace_mgr.copy_from_previous(previous_workspace, ["history.json", "train_model.py", "EDA.md", "wandb_run_id.txt"])
         
         if had_commits and git_mgr.is_on_main() and dataset_branch != "main":
             if git_mgr.has_uncommitted_changes():

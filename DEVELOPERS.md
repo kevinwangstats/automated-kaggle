@@ -7,11 +7,11 @@ This document contains the technical details, architectural decisions, and devel
 The system consists of the following core components:
 
 1. **EDA Engine**: Automatically performs Exploratory Data Analysis on a given dataset and outputs a concise `EDA.md` summary for the LLM context.
-2. **Baseline Engine**: Evaluates standard frameworks (XGBoost, LightGBM, CatBoost, H2O AutoML, etc.) using K-Fold Cross-Validation to establish a baseline performance. It then generates an initial `train_model.py` template that initializes and ensembles the models defined in `models_registry.yaml` (e.g., XGBoost, LightGBM, CatBoost, HistGradientBoosting) using a `VotingClassifier` or `VotingRegressor` as a starting point for the agent. **Crucially, `train_model.py` is an ephemeral file**; even if an old version exists from a previous run or a different dataset, it will be completely overwritten by the newly generated ensemble script when the pipeline starts. For binary classification tasks, it automatically generates detailed out-of-fold metrics including Accuracy, F1 Score, Sensitivity, Specificity, and Positive/Negative case counts.
- For multi-class tasks, it provides Accuracy, Macro/Micro F1 Scores, and class distribution counts.
+2. **Baseline Engine**: Evaluates standard frameworks (XGBoost, LightGBM, CatBoost, H2O AutoML, etc.) using K-Fold Cross-Validation to establish a baseline performance. It then generates an initial `train_model.py` template that initializes and ensembles the models defined in `models_registry.yaml` (e.g., XGBoost, LightGBM, CatBoost, HistGradientBoosting) using a `VotingClassifier` or `VotingRegressor` as a starting point for the agent. **Crucially, `train_model.py` is an ephemeral file**; even if an old version exists from a previous run or a different dataset, it will be completely overwritten by the newly generated ensemble script when the pipeline starts (unless resuming). For binary classification tasks, it automatically generates detailed out-of-fold metrics including Accuracy, F1 Score, Sensitivity, Specificity, and Positive/Negative case counts. For multi-class tasks, it provides Accuracy, Macro/Micro F1 Scores, and class distribution counts.
 3. **Agent Loop**: An orchestrator powered by `litellm` that feeds the dataset context, current code, and performance history to an LLM. The LLM edits the Python training script directly on the dataset branch to improve the cross-validation score. If an iteration succeeds, it is immediately committed. If an iteration fails (due to timeout or error), the broken code is retained uncommitted in the working directory so the next iteration can attempt to fix it.
 4. **Git Manager**: Ensures strict provenance. All dataset-specific work runs on a dedicated dataset branch. Successful iterations are directly committed and tracked.
-5. **Resume & Continuity**: The pipeline supports a `--resume` flag that bypasses the EDA and Baseline engines to prevent overwriting existing progress. It parses `history.json` to calculate the starting iteration and current best score, and reloads the Weights & Biases run ID from `wandb_run_id.txt` to ensure metrics plot on a continuous timeline.
+5. **Workspace Manager**: Isolates all ephemeral artifacts (`train_model.py`, `metrics.json`, `history.json`, `EDA.md`, `raw_submission.csv`) into a static `.workspaces/<dataset_branch>/` directory. This keeps the repository root clean and enables parallel experiments on different datasets without file collisions.
+6. **Resume & Continuity**: The pipeline detects previous state in the workspace and prompts the user to resume or start from scratch. The `run_mode` config key (`"prompt"`, `"resume"`, `"scratch"`) controls this behavior. When resuming, it parses `history.json` to calculate the starting iteration and current best score, and reloads the W&B run ID from `wandb_run_id.txt`. If the user manually edits `train_model.py` between runs, a `HUMAN_INTERVENTION` entry is automatically injected into `history.json` to preserve strict code provenance.
 
 ## Git Branches and Worktree Architecture
 
@@ -24,16 +24,25 @@ This project enforces a strictly data-agnostic workflow using **Git Worktrees**.
 ├── automated-kaggle/             [Branch: main] Primary Repo (Core Engine)
 │   ├── main.py
 │   ├── agent_loop.py
-│   └── baseline_engine.py
+│   ├── baseline_engine.py
+│   ├── workspace_manager.py
+│   └── .workspaces/              (git-ignored, ephemeral artifacts)
+│       └── titanic/
+│           ├── train_model.py
+│           ├── history.json
+│           ├── EDA.md
+│           └── metrics.json
 │
 ├── automated-kaggle-titanic/     [Branch: titanic] Worktree (Dataset Experiment)
-│   ├── train_model.py
 │   ├── config.yaml
-│   └── history.json
+│   └── .workspaces/titanic/
+│       ├── train_model.py
+│       └── history.json
 │
 └── automated-kaggle-spaceship/   [Branch: spaceship] Worktree (Dataset Experiment)
-    ├── train_model.py
-    └── ...
+    ├── config.yaml
+    └── .workspaces/spaceship/
+        └── ...
 ```
 
 ### Working with New Datasets
