@@ -2,66 +2,87 @@
 # Agentic AutoML Pipeline Configuration
 # ---------------------------------------------------------
 
+# --- CORE REQUIRED SETTINGS ---
+
 # dataset_path: The relative path to the training dataset CSV file.
 # This parameter is REQUIRED.
 # It also determines the Git branch name used for experiments. 
-# For example, "data/titanic/train.csv" will use a branch named "titanic".
+# Examples: "data/titanic/train.csv", "data/house-prices/train.csv", "data/train.csv"
 dataset_path: "data/train.csv"
-
-# max_rows: Limits the number of rows loaded into memory to prevent OOM errors on large datasets.
-# Set to null or ~ to load all rows.
-max_rows: 100000
 
 # target_col: The exact name of the target/label column in your dataset.
 # This parameter is REQUIRED.
+# Examples: "Survived", "SalePrice", "Transported", "target"
 target_col: "target"
 
-# model: The LLM model to use for generating code improvements.
-# Uses litellm routing format: "provider/model-name"
-# Examples: "gemini/gemini-2.0-flash", "openai/gpt-4o", "ollama/qwen2.5:7b"
-# If not set, it defaults to the AUTOML_MODEL environment variable or gemini-2.0-flash.
-model: ollama/qwen3.5:2b
-
-# ollama_base_url: The URL where your local Ollama instance is running.
-# Only needed if using an "ollama/*" model. Default: http://localhost:11434
-ollama_base_url: ~
+# --- IMPORTANT SETTINGS ---
 
 # test_path: The relative path to the testing dataset CSV file.
 # If provided, the generated model scripts should use this to create "raw_submission.csv".
+# Examples: "data/test.csv", "data/titanic/test.csv", ~
 test_path: "data/test.csv"
+
+# model: The LLM model to use for generating code improvements.
+# Uses litellm routing format: "provider/model-name"
+# Examples: "gemini/gemini-2.0-flash", "openai/gpt-4o", "ollama/qwen2.5:7b", "deepseek/deepseek-v4-pro", "anthropic/claude-3-5-sonnet-20241022"
+# If not set, it defaults to the AUTOML_MODEL environment variable or gemini-2.5-flash-lite.
+model: ollama/qwen3.5:2b
+
+# iterations: The maximum number of improvement cycles the Agentic LLM should perform.
+# In each iteration, the LLM analyzes previous results and proposes script modifications.
+# Examples: 5, 10, 20, 50
+iterations: 5
+
+# --- PIPELINE TUNING & METRICS ---
 
 # metric: The scikit-learn scoring metric name for Cross Validation.
 # If null (~), it defaults to 'roc_auc' for classification and 'neg_mean_squared_error' for regression.
-# Example: "f1", "accuracy", "neg_log_loss", "r2", "neg_mean_absolute_error"
+# Examples: "f1", "accuracy", "roc_auc", "neg_log_loss", "r2", "neg_mean_squared_error", ~
 metric: ~
+
+# max_rows: Limits the number of rows loaded into memory to prevent OOM errors on large datasets.
+# Set to null or ~ to load all rows.
+# Examples: 10000, 100000, 500000, ~, null
+max_rows: 100000
+
+# timeout: The maximum time (in seconds) allowed for a single generated training script to run.
+# Prevents the pipeline from hanging on infinite loops or extremely slow training code.
+# Examples: 300, 600, 1200, 3600
+timeout: 600
+
+# --- KAGGLE SUBMISSION OPTIONS ---
 
 # pred_prob: Boolean indicating if the final Kaggle submission should be probabilities (true) 
 # or discrete class labels (false). Default: true.
 # raw_submission.csv ALWAYS contains probabilities for classification;
 # this flag determines if kaggle_submit.py converts them to classes.
+# Examples: true, false
 pred_prob: true
 
 # example_submission: Path to a Kaggle-provided sample submission file.
 # The pipeline uses this to automatically detect if the competition requires 
 # probabilities or classes, and to identify the correct target column name.
+# Examples: "data/sample_submission.csv", "data/titanic/gender_submission.csv", ~
 example_submission: ~
 
 # auto_kaggle_submit: If true, the pipeline will automatically attempt to submit
 # the final "submission.csv" to Kaggle using the Kaggle CLI.
 # Requires: `pip install kaggle` and a valid `~/.kaggle/kaggle.json`.
+# Examples: true, false
 auto_kaggle_submit: false
 
-# iterations: The maximum number of improvement cycles the Agentic LLM should perform.
-# In each iteration, the LLM analyzes previous results and proposes script modifications.
-iterations: 5
-
-# timeout: The maximum time (in seconds) allowed for a single generated training script to run.
-# Prevents the pipeline from hanging on infinite loops or extremely slow training code.
-timeout: 600
+# --- LOGGING & ADVANCED OPTIONS ---
 
 # wandb: Weights & Biases configuration for tracking experiments and metrics.
 wandb:
   # enabled: Whether to log results to wandb.
+  # Examples: true, false
   enabled: true
   # entity: Your W&B username or team name.
+  # Examples: "kevinwangstats", "my-ml-team", "john-doe"
   entity: "kevinwangstats"
+
+# ollama_base_url: The URL where your local Ollama instance is running.
+# Only needed if using an "ollama/*" model. Default: http://localhost:11434
+# Examples: "http://localhost:11434", "http://192.168.1.100:11434", ~
+ollama_base_url: ~

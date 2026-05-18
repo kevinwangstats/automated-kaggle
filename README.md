@@ -1,6 +1,6 @@
 # Agentic AutoML Tabular Pipeline Template
 
-This repository serves as a ready-to-use template for automated, agentic modeling on **tabular** Kaggle data challenges. It implements an LLM-driven pipeline that iteratively improves machine learning performance by concurrently optimizing and ensembling a suite of powerful frameworks: **XGBoost**, **LightGBM**, **CatBoost**, and **H2O AutoML**.
+This repository serves as a ready-to-use template for automated, agentic modeling on **tabular** Kaggle data challenges. It implements an LLM-driven pipeline that iteratively improves machine learning performance by concurrently optimizing and ensembling a suite of powerful frameworks (e.g., **XGBoost**, **LightGBM**, **CatBoost**, **HistGradientBoosting**), while also supporting evaluation of **H2O AutoML** baselines.
 
 The pipeline establishes a baseline ensemble out of the box, and then uses LLM-driven reasoning to tune hyperparameters, perform feature engineering, and refine the ensemble architecture to maximize cross-validation scores.
 
@@ -14,10 +14,22 @@ If you are looking for technical details on how the pipeline is built, its archi
    pip install -r requirements.txt
    ```
 
-2. **Configure your LLM.** This pipeline uses [`litellm`](https://docs.litellm.ai/docs/providers) to support any LLM provider. Model selection follows this priority order:
+2. **Dataset Isolation with Git Worktree.** This project uses a parallel directory structure to isolate the core engine (`main` branch) from dataset-specific artifacts (e.g., `titanic` branch). This prevents branch-switching friction and keeps your workspace clean.
+
+   To set up a new dataset environment:
+   ```bash
+   # 1. Create a branch for your dataset (if it doesn't exist)
+   git branch titanic
+   # 2. Add a worktree in a sibling directory
+   git worktree add ../automated-kaggle-titanic titanic
+   # 3. Change into that directory to run experiments
+   cd ../automated-kaggle-titanic
+   ```
+
+3. **Configure your LLM.** This pipeline uses [`litellm`](https://docs.litellm.ai/docs/providers) to support any LLM provider. Model selection follows this priority order:
    1. `model` field in `config.yaml` (highest priority)
    2. `AUTOML_MODEL` environment variable
-   3. Default: `gemini/gemini-2.0-flash`
+   3. Default: `gemini/gemini-2.5-flash-lite`
 
    **Gemini (default):**
 

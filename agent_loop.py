@@ -81,8 +81,11 @@ def run_agent_loop(
     wandb_project: str = None,
     wandb_entity: str = None,
     pred_prob: bool = True,
-    config_path: str = "config.yaml"
+    config_path: str = "config.yaml",
+    available_models: list = None
 ):
+    if available_models is None:
+        available_models = []
     log_stage("Starting Agentic Loop")
     current_best_score = base_score
     history = []
@@ -94,7 +97,7 @@ def run_agent_loop(
                 history = json.load(f)
                 
             if base_score is None and history:
-                higher_is_better = (task == 'classification')
+                higher_is_better = True
                 valid_scores = [run['score'] for run in history if run.get('score') is not None]
                 if valid_scores:
                     current_best_score = max(valid_scores) if higher_is_better else min(valid_scores)
@@ -134,6 +137,7 @@ def run_agent_loop(
 
         pred_prob_instruction = "Ensure that for the final `raw_submission.csv`, you predict the continuous PROBABILITIES for the positive class (e.g., using `predict_proba(test_X)[:, 1]`). Another script will handle formatting it for Kaggle into `submission.csv`."
 
+        models_str = ", ".join(available_models) if available_models else "None specifically defined in registry"
         prompt = f"""You are an expert AI Data Scientist. Your goal is to improve the Cross-Validation score of the model.
 
 CRITICAL: Your script MUST remain dataset-agnostic. 
@@ -147,7 +151,7 @@ MODELING FREEDOM: You are NOT restricted to the current model setup (e.g., CatBo
 - You are encouraged to change the model architecture, introduce ensembling (using `VotingClassifier`/`Regressor` or `StackingClassifier`/`Regressor`), or try different frameworks (XGBoost, LightGBM, CatBoost, H2O AutoML) to improve the score.
 - You can add feature engineering, handle missing values better, and tune hyperparameters.
 
-You have access to the following pre-configured models from the registry: {available_models}. You may tune their hyperparameters, but do not hallucinate imports for models outside of this list unless you are confident they are in the environment.
+You have access to the following pre-configured models from the registry: {models_str}. You may tune their hyperparameters, but do not hallucinate imports for models outside of this list unless you are confident they are in the environment.
 
 You should try tuning hyperparameters for these models, comparing their individual performance, or ensembling them (e.g., using `VotingClassifier`/`VotingRegressor` or `StackingClassifier`/`StackingRegressor`) to maximize the cross-validation score.
 
@@ -230,7 +234,7 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. D
             new_score = run_training_script("train_model.py", timeout=timeout, config_path=config_path)
             log_metric("Iteration Score", new_score)
             
-            higher_is_better = (task == 'classification')
+            higher_is_better = True
             
             improved = (new_score > current_best_score) if higher_is_better else (new_score < current_best_score)
             

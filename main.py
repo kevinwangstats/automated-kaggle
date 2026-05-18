@@ -136,6 +136,16 @@ def main():
                 git_mgr.ensure_dataset_branch_after_initial_commit(dataset_branch)
 
         # Phase 3: Agentic Loop
+        available_models = []
+        if os.path.exists("models_registry.yaml"):
+            try:
+                with open("models_registry.yaml", "r") as f:
+                    reg = yaml.safe_load(f)
+                    if reg and 'models' in reg:
+                        available_models = list(reg['models'].keys())
+            except Exception:
+                pass
+
         run_agent_loop(
             dataset_path=dataset_path,
             target_col=target_col,
@@ -152,7 +162,8 @@ def main():
             wandb_project=wandb_project,
             wandb_entity=wandb_entity,
             pred_prob=pred_prob,
-            config_path=args.config
+            config_path=args.config,
+            available_models=available_models
         )
         
         # Ensure we have a raw_submission.csv if we have a test_path
