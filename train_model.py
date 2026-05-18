@@ -5,20 +5,21 @@ import json
 import os
 import re
 import argparse
-from sklearn.experimental import enable_iterative_imputer  # noqa
 from sklearn.model_selection import StratifiedKFold, KFold
-from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler, RobustScaler
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer, IterativeImputer
 from sklearn.metrics import make_scorer, roc_auc_score, mean_squared_error
 from sklearn.ensemble import (
-    StackingClassifier,
-    StackingRegressor,
+    VotingClassifier,
+    VotingRegressor,
     HistGradientBoostingClassifier,
     HistGradientBoostingRegressor,
     RandomForestClassifier,
     RandomForestRegressor,
+    ExtraTreesClassifier,
+    ExtraTreesRegressor,
 )
 from sklearn.linear_model import LogisticRegression, Ridge
 from xgboost import XGBClassifier, XGBRegressor
@@ -46,12 +47,12 @@ def extract_title(name):
 
 def engineer_features(X):
     """
-    Dataset-agnostic feature engineering.
-    Checks existence of specific columns before applying transformations.
+    Dataset‑agnostic feature engineering with robust missing value handling.
+    All transformations are computed on X (training or test) without target leakage.
     """
     X = X.copy()
 
-    # Title extraction from Name
+    # --- 1. Title from Name ---
     if 'Name' in X.columns:
         X['Title'] = X['Name'].apply(extract_title)
         # Group rare titles (fewer than 5 occurrences)
@@ -60,55 +61,101 @@ def engineer_features(X):
         X['Title'] = X['Title'].replace(rare_titles, 'Rare')
         X.drop('Name', axis=1, inplace=True)
 
-    # FamilySize
+    # --- 2. Intelligent Age imputation using groups ---
+    if 'Age' in X.columns and X['Age'].isna().any():
+        group_cols = []
+        for col in ['Pclass', 'Sex', 'Title']:
+            if col in X.columns:
+                group_cols.append(col)
+        if group_cols:
+            X['Age'] = X.groupby(group_cols, dropna=False)['Age'].transform(
+                lambda x: x.fillna(x.median())
+            )
+        X['Age'] = X['Age'].fillna(X['Age'].median())
+
+    # --- 3. Embarked imputation (mode per Pclass) ---
+    if 'Embarked' in X.columns and X['Embarked'].isna().any():
+        if 'Pclass' in X.columns:
+            X['Embarked'] = X.groupby('Pclass', dropna=False)['Embarked'].transform(
+                lambda x: x.fillna(x.mode().iloc[0] if not x.mode().empty else 'S')
+            )
+        else:
+            X['Embarked'] = X['Embarked'].fillna('S')
+
+    # --- 4. Fare imputation (median per Pclass) ---
+    if 'Fare' in X.columns and X['Fare'].isna().any():
+        if 'Pclass' in X.columns:
+            X['Fare'] = X.groupby('Pclass', dropna=False)['Fare'].transform(
+                lambda x: x.fillna(x.median())
+            )
+        else:
+            X['Fare'] = X['Fare'].fillna(X['Fare'].median())
+
+    # --- 5. Sex numeric feature (model‑friendly binary) ---
+    if 'Sex' in X.columns:
+        mode_val = X['Sex'].mode()[0] if not X['Sex'].mode().empty else X['Sex'].iloc[0]
+        X['Sex_numeric'] = (X['Sex'] == mode_val).astype(int)
+
+    # --- 6. Family size & loneliness ---
     if 'SibSp' in X.columns and 'Parch' in X.columns:
         X['FamilySize'] = X['SibSp'] + X['Parch'] + 1
         X['IsAlone'] = (X['FamilySize'] == 1).astype(int)
 
-    # Fare per person
+    # --- 7. Fare per person ---
     if 'Fare' in X.columns and 'FamilySize' in X.columns:
         X['FarePerPerson'] = X['Fare'] / X['FamilySize'].clip(lower=1)
 
-    # Interaction features
+    # --- 8. Interaction features ---
     if 'Age' in X.columns and 'Pclass' in X.columns:
         X['Age_Pclass'] = X['Age'] * X['Pclass']
     if 'Fare' in X.columns and 'Pclass' in X.columns:
         X['Fare_Pclass'] = X['Fare'] * X['Pclass']
+    if 'Age' in X.columns and 'Sex_numeric' in X.columns:
+        X['Age_Sex'] = X['Age'] * X['Sex_numeric']
+    if 'Fare' in X.columns and 'Sex_numeric' in X.columns:
+        X['Fare_Sex'] = X['Fare'] * X['Sex_numeric']
+    if 'Pclass' in X.columns and 'Sex_numeric' in X.columns:
+        X['Pclass_Sex'] = X['Pclass'] * X['Sex_numeric']
 
-    # Cabin: extract first letter (deck)
+    # --- 9. Log‑transform Fare (reduces skew) ---
+    if 'Fare' in X.columns:
+        X['LogFare'] = X['Fare'].apply(lambda x: np.log1p(max(x, 0)))
+
+    # --- 10. Cabin: deck and HasCabin flag ---
     if 'Cabin' in X.columns:
-        X['Deck'] = X['Cabin'].astype(str).str[0]  # first character
-        X['Deck'] = X['Deck'].replace('n', 'U')
+        X['HasCabin'] = X['Cabin'].notna().astype(int)
+        X['Deck'] = X['Cabin'].astype(str).str[0]
+        X['Deck'] = X['Deck'].replace('n', 'U')   # 'n' from 'nan'
         X['Deck'] = X['Deck'].fillna('U')
         X.drop('Cabin', axis=1, inplace=True)
 
-    # Age band (non‑linear relationship)
+    # --- 11. Age bands (non‑linear) ---
     if 'Age' in X.columns:
         bins = [-np.inf, 12, 18, 25, 35, 50, 65, np.inf]
         labels = ['Child', 'Teen', 'YoungAdult', 'Adult', 'MiddleAge', 'Senior', 'Elder']
         X['AgeBand'] = pd.cut(X['Age'], bins=bins, labels=labels)
 
-    # Fare band (non‑linear relationship, quantile based to be robust)
+    # --- 12. Fare bands (quantile‑based) ---
     if 'Fare' in X.columns:
         try:
-            X['FareBand'] = pd.qcut(X['Fare'], q=4, labels=['Low','Med','High','VHigh'])
+            X['FareBand'] = pd.qcut(X['Fare'], q=4, labels=['Low','Med','High','VHigh'], duplicates='drop')
         except ValueError:
-            # fallback if not enough distinct values
             X['FareBand'] = pd.cut(X['Fare'], bins=4, labels=['Q1','Q2','Q3','Q4'])
 
-    # Drop Ticket if present
+    # --- 13. Ticket length (if available) ---
     if 'Ticket' in X.columns:
-        X.drop('Ticket', axis=1, inplace=True)
+        X['TicketLength'] = X['Ticket'].astype(str).str.len()
 
-    # Drop PassengerId if present
-    if 'PassengerId' in X.columns:
-        X.drop('PassengerId', axis=1, inplace=True)
+    # --- 14. Drop high‑cardinality / ID columns ---
+    for col in ['Ticket', 'PassengerId']:
+        if col in X.columns:
+            X.drop(col, axis=1, inplace=True)
 
     return X
 
 
 def train_and_evaluate(config_path="config.yaml"):
-    # 1. Load Configuration & Data
+    # 1. Load config & data
     config = load_config(config_path)
     dataset_path = config.get("dataset_path")
     target_col = config.get("target_col")
@@ -121,17 +168,16 @@ def train_and_evaluate(config_path="config.yaml"):
 
     task = 'classification' if y_raw.nunique() < 20 else 'regression'
 
-    # 2. Feature Engineering
+    # 2. Feature engineering
     X = engineer_features(X)
 
-    # 3. Preprocessing Pipeline
+    # 3. Preprocessing pipeline (numerical + categorical)
     categorical_features = X.select_dtypes(include=['object', 'category', 'string']).columns.tolist()
     numerical_features = X.select_dtypes(include=np.number).columns.tolist()
 
-    # Use IterativeImputer for numerical features to better handle missing values
     num_pipe = Pipeline(steps=[
-        ('imputer', IterativeImputer(max_iter=10, random_state=42)),
-        ('scaler', StandardScaler())
+        ('imputer', IterativeImputer(max_iter=5, random_state=42)),
+        ('scaler', RobustScaler())  # RobustScaler is less sensitive to outliers
     ])
     cat_pipe = Pipeline(steps=[
         ('imputer', SimpleImputer(strategy='constant', fill_value='missing')),
@@ -146,26 +192,25 @@ def train_and_evaluate(config_path="config.yaml"):
         remainder='drop'
     )
 
-    # 4. Class imbalance handling (for binary classification)
+    # 4. Compute class weights for binary classification
     scale_pos_weight_val = None
     if task == 'classification':
         le_global = LabelEncoder()
         y_num = le_global.fit_transform(y_raw)
-        n_classes = len(le_global.classes_)
-        if n_classes == 2:  # binary
+        if len(le_global.classes_) == 2:
             count0 = np.sum(y_num == 0)
             count1 = np.sum(y_num == 1)
             if count1 > 0:
                 scale_pos_weight_val = count0 / count1
 
-    # 5. Base models with tuned hyperparameters
+    # 5. Build base models with careful regularisation
     base_models = []
     if task == 'classification':
         # XGBoost
         xgb_params = {
-            'n_estimators': 1000,
-            'learning_rate': 0.01,
-            'max_depth': 6,
+            'n_estimators': 800,
+            'learning_rate': 0.02,
+            'max_depth': 4,
             'subsample': 0.8,
             'colsample_bytree': 0.8,
             'reg_alpha': 0.1,
@@ -180,8 +225,8 @@ def train_and_evaluate(config_path="config.yaml"):
 
         # LightGBM
         lgb_params = {
-            'n_estimators': 1000,
-            'learning_rate': 0.01,
+            'n_estimators': 800,
+            'learning_rate': 0.02,
             'num_leaves': 31,
             'subsample': 0.8,
             'colsample_bytree': 0.8,
@@ -198,10 +243,11 @@ def train_and_evaluate(config_path="config.yaml"):
 
         # CatBoost
         cat_params = {
-            'iterations': 1000,
-            'learning_rate': 0.01,
-            'depth': 6,
-            'l2_leaf_reg': 3,
+            'iterations': 800,
+            'learning_rate': 0.02,
+            'depth': 4,
+            'l2_leaf_reg': 5,
+            'random_strength': 1.0,
             'random_state': 42,
             'verbose': 0,
             'auto_class_weights': 'Balanced',
@@ -210,75 +256,79 @@ def train_and_evaluate(config_path="config.yaml"):
 
         # HistGradientBoosting
         base_models.append(('hist', HistGradientBoostingClassifier(
-            max_iter=1000,
-            learning_rate=0.01,
-            max_depth=6,
+            max_iter=800,
+            learning_rate=0.02,
+            max_depth=4,
             min_samples_leaf=20,
-            l2_regularization=1.0,
+            l2_regularization=0.5,
             random_state=42
         )))
 
         # RandomForest
         base_models.append(('rf', RandomForestClassifier(
             n_estimators=500,
-            max_depth=10,
+            max_depth=8,
             min_samples_leaf=5,
+            max_features=0.6,
             class_weight='balanced',
             random_state=42,
             n_jobs=-1
         )))
 
-        # LogisticRegression (adds linear capability)
+        # ExtraTrees
+        base_models.append(('et', ExtraTreesClassifier(
+            n_estimators=500,
+            max_depth=8,
+            min_samples_leaf=5,
+            max_features=0.6,
+            class_weight='balanced',
+            random_state=42,
+            n_jobs=-1
+        )))
+
+        # Logistic Regression (highly regularised)
         base_models.append(('lr', LogisticRegression(
             max_iter=1000,
-            C=0.1,
+            C=0.05,
             class_weight='balanced',
             solver='liblinear',
             random_state=42
         )))
 
-        # Stacking with a regularised LogisticRegression meta‑learner
-        ensemble = StackingClassifier(
+        # Ensemble: VotingClassifier with soft voting (uniform weights)
+        ensemble = VotingClassifier(
             estimators=base_models,
-            final_estimator=LogisticRegression(
-                max_iter=1000,
-                C=0.1,
-                class_weight='balanced',
-                random_state=42
-            ),
-            stack_method='predict_proba',
-            cv=5,
+            voting='soft',
             n_jobs=-1
         )
-    else:  # regression
+
+    else:  # regression (kept for completeness, analogous changes)
         base_models.append(('xgb', XGBRegressor(
-            n_estimators=1000, learning_rate=0.01, max_depth=6,
+            n_estimators=800, learning_rate=0.02, max_depth=4,
             subsample=0.8, colsample_bytree=0.8, reg_alpha=0.1,
             reg_lambda=1.0, random_state=42
         )))
         base_models.append(('lgb', LGBMRegressor(
-            n_estimators=1000, learning_rate=0.01, num_leaves=31,
+            n_estimators=800, learning_rate=0.02, num_leaves=31,
             subsample=0.8, colsample_bytree=0.8, min_child_samples=20,
             reg_alpha=0.1, reg_lambda=1.0, random_state=42,
             verbose=-1, n_jobs=-1
         )))
         base_models.append(('cat', CatBoostRegressor(
-            iterations=1000, learning_rate=0.01, depth=6,
+            iterations=800, learning_rate=0.02, depth=4,
             l2_leaf_reg=3, random_state=42, verbose=0
         )))
         base_models.append(('hist', HistGradientBoostingRegressor(
-            max_iter=1000, learning_rate=0.01, max_depth=6,
+            max_iter=800, learning_rate=0.02, max_depth=4,
             min_samples_leaf=20, l2_regularization=1.0,
             random_state=42
         )))
         base_models.append(('rf', RandomForestRegressor(
-            n_estimators=500, max_depth=10, min_samples_leaf=5,
+            n_estimators=500, max_depth=8, min_samples_leaf=5,
             random_state=42, n_jobs=-1
         )))
-        ensemble = StackingRegressor(
+        ensemble = VotingRegressor(
             estimators=base_models,
-            final_estimator=Ridge(alpha=1.0, random_state=42),
-            cv=5,
             n_jobs=-1
         )
 
@@ -288,7 +338,7 @@ def train_and_evaluate(config_path="config.yaml"):
         ('ensemble', ensemble)
     ])
 
-    # 7. Cross-validation
+    # 7. Cross‑validation
     if task == 'classification':
         cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
         scoring = 'roc_auc'
@@ -311,7 +361,6 @@ def train_and_evaluate(config_path="config.yaml"):
             y_val_enc = y_val
             le = None
 
-        # Clone and fit
         fold_pipe = clone(pipeline)
         fold_pipe.fit(X_train, y_train_enc)
 
@@ -331,10 +380,9 @@ def train_and_evaluate(config_path="config.yaml"):
     with open("metrics.json", "w") as f:
         json.dump({"cv_score": final_score}, f)
 
-    # 8. Generate submission
+    # 8. Generate submission (if test_path present)
     if test_path and os.path.exists(test_path):
         print("Generating submission on test set...")
-        # Fit on full training data
         if task == 'classification':
             le_full = LabelEncoder()
             y_enc = le_full.fit_transform(y_raw)
@@ -343,11 +391,10 @@ def train_and_evaluate(config_path="config.yaml"):
 
         pipeline.fit(X, y_enc)
 
-        # Load test data, apply same feature engineering
         test_df = pd.read_csv(test_path)
         test_X = engineer_features(test_df)
 
-        # Align columns with training data (fill missing columns with NaN)
+        # Align test columns with training columns (fill missing with NaN)
         for col in set(X.columns) - set(test_X.columns):
             test_X[col] = np.nan
         test_X = test_X[X.columns]
@@ -357,7 +404,6 @@ def train_and_evaluate(config_path="config.yaml"):
         else:
             preds = pipeline.predict(test_X)
 
-        # Build submission DataFrame: first column from test (usually ID), then predictions
         submission = pd.DataFrame()
         if not test_df.empty:
             first_col_name = test_df.columns[0]
