@@ -12,3 +12,5 @@ All successful model improvements are documented here.
 - **Iter 9**: Score 0.8912 (Commit: 19992677cd18365c730bb6954d18df8127c2933b)
 
 - **Iter 12**: Score 0.8702 (Commit: f310270c765ede3064bebb743a0e4873f921bab3)
+
+- **Iter 13**: Score 0.8755 (Commit: b84781921350b9ae2fd5b065773a7935e3f51b08)
