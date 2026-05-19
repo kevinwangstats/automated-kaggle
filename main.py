@@ -48,28 +48,6 @@ def main():
         workspace_mgr = WorkspaceManager(dataset_branch, root_dir=workspace_root)
         had_commits = bool(git_mgr.repo.heads)
         
-        # State detection: check the static workspace for existing artifacts
-        has_previous_state = workspace_mgr.file_exists("history.json") and workspace_mgr.file_exists("train_model.py")
-                
-        should_resume = args.resume
-        if has_previous_state and not args.resume:
-            if args.yes:
-                resolved_mode = "resume" if run_mode == "prompt" else run_mode
-                should_resume = (resolved_mode == "resume")
-                print(f"Skipping interactive prompt due to -y flag. Using fallback mode: {resolved_mode}")
-            else:
-                if run_mode == "resume":
-                    should_resume = True
-                elif run_mode == "scratch":
-                    should_resume = False
-                else:
-                    ans = input("[Warning] Previous iterations detected for this dataset. Do you want to resume from the existing train_model.py and history? (y/n): ")
-                    should_resume = (ans.lower() == 'y')
-                
-        if args.resume and not has_previous_state:
-            print("[Warning] --resume passed but no previous workspace state found. Falling back to start from scratch.")
-            should_resume = False
-        
         if had_commits and git_mgr.is_on_main() and dataset_branch != "main":
             if git_mgr.has_uncommitted_changes():
                 print("\n[Warning] You have uncommitted changes on the 'main' branch.")
@@ -96,10 +74,37 @@ def main():
                     git_mgr.delete_branch(dataset_branch)
                     print(f"Deleted outdated dataset branch '{dataset_branch}'.")
 
+        # Checkout dataset branch to reveal tracked files
         if had_commits:
             git_mgr.ensure_dataset_branch(dataset_branch)
-            if not should_resume:
-                git_mgr.revert_changes()
+
+        # State detection: check the ROOT directory for tracked artifacts
+        has_previous_state = os.path.exists("history.json") and os.path.exists("train_model.py")
+                
+        should_resume = args.resume
+        if has_previous_state and not args.resume:
+            if args.yes:
+                resolved_mode = "resume" if run_mode == "prompt" else run_mode
+                should_resume = (resolved_mode == "resume")
+                print(f"Skipping interactive prompt due to -y flag. Using fallback mode: {resolved_mode}")
+            else:
+                if run_mode == "resume":
+                    should_resume = True
+                elif run_mode == "scratch":
+                    should_resume = False
+                else:
+                    ans = input("[Warning] Previous iterations detected for this dataset. Do you want to resume from the existing train_model.py and history? (y/n): ")
+                    should_resume = (ans.lower() == 'y')
+                
+        if args.resume and not has_previous_state:
+            print("[Warning] --resume passed but no previous root state found. Falling back to start from scratch.")
+            should_resume = False
+
+        if had_commits and not should_resume:
+            git_mgr.revert_changes()
+            # Clean up root files to start completely fresh
+            for f in ["train_model.py", "history.json", "EDA.md"]:
+                if os.path.exists(f): os.remove(f)
 
         wandb_project = dataset_branch
 
@@ -145,8 +150,8 @@ def main():
             
             import json
             import re
-            history_path = workspace_mgr.get_file_path("history.json")
-            script_path = workspace_mgr.get_file_path("train_model.py")
+            history_path = "history.json"
+            script_path = "train_model.py"
             
             history = []
             if os.path.exists(history_path):
@@ -275,7 +280,7 @@ def main():
         if test_path and not os.path.exists(raw_sub_path):
             log_stage("Generating Baseline Submission")
             try:
-                script_path = workspace_mgr.get_file_path("train_model.py") if workspace_mgr else "train_model.py"
+                script_path = "train_model.py"
                 run_training_script(script_path=script_path, timeout=timeout, config_path=args.config, workspace_mgr=workspace_mgr)
             except Exception as e:
                 log_error("Failed to generate baseline submission", e)
