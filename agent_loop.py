@@ -173,7 +173,7 @@ FIX ERRORS FIRST: If the history context above indicates the previous run failed
 
 IMPROVE SCORE: If the previous run succeeded, your goal is to propose a modified version of the script to improve the model via feature engineering, missing value handling, hyperparameter tuning, or architecture changes.
 
-Always ensure you write the final cross-validation score to a file named metrics.json with the format: {{"cv_score": final_score}}.
+Always ensure you write the final cross-validation score to a file named `metrics.json` and predictions to `raw_submission.csv` in the EXACT SAME DIRECTORY as the script itself using `os.path.join(os.path.dirname(os.path.abspath(__file__)), ...)`. Do not use generic relative paths like `"metrics.json"`. The format should be: `{{"cv_score": final_score}}`.
 {pred_prob_instruction}
 Output ONLY the full modified Python code wrapped in python ...  blocks. Do not include other text.
 """

@@ -140,7 +140,8 @@ def train_and_evaluate(config_path="config.yaml"):
         scores.append(score)
 
     final_score = np.mean(scores)
-    with open("metrics.json", "w") as f:
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(SCRIPT_DIR, "metrics.json"), "w") as f:
         json.dump({{"cv_score": final_score}}, f)
 
     # 6. Generate Submission (if test_path is provided)
@@ -161,7 +162,7 @@ def train_and_evaluate(config_path="config.yaml"):
         if len(test_df.columns) > 0:
              submission[test_df.columns[0]] = test_df.iloc[:, 0]
         submission[target_col] = preds
-        submission.to_csv("raw_submission.csv", index=False)
+        submission.to_csv(os.path.join(SCRIPT_DIR, "raw_submission.csv"), index=False)
         print("Saved raw_submission.csv")
 
     return final_score
