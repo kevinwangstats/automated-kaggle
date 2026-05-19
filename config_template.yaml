@@ -77,7 +77,7 @@ pred_prob: true
 example_submission: ~
 
 # auto_kaggle_submit: If true, the pipeline will automatically attempt to submit
-# the final "submission.csv" to Kaggle using the Kaggle CLI.
+# "submission.csv" to Kaggle during each improved iteration using the Kaggle CLI.
 # Requires: `pip install kaggle` and a valid `~/.kaggle/kaggle.json`.
 # Examples: true, false
 auto_kaggle_submit: false
