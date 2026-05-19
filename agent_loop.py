@@ -267,6 +267,17 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. D
                 with open("CHANGELOG.md", "a") as f:
                     f.write(f"\n- **Iter {len(history)+1}**: Score {new_score:.4f} (Commit: {commit_id})\n")
                     
+                # Submit to Kaggle if auto_submit is on
+                try:
+                    import kaggle_submit
+                    raw_sub_path = workspace_mgr.get_file_path("raw_submission.csv") if workspace_mgr else "raw_submission.csv"
+                    if os.path.exists(raw_sub_path):
+                        log_stage(f"Automated Kaggle Submission for Iteration {len(history)+1}")
+                        kaggle_submit.format_submission(config_path, workspace_mgr=workspace_mgr)
+                        kaggle_submit.submit_to_kaggle(config_path, commit_id=commit_id, workspace_mgr=workspace_mgr)
+                except Exception as e:
+                    log_error(f"Failed to submit iteration {len(history)+1} to Kaggle", e)
+                    
                 # Update history
                 history.append({
                     "iteration": len(history)+1,
