@@ -39,16 +39,23 @@ def engineer_features(df):
     for col in df.columns:
         if df[col].isnull().any():
             if df[col].dtype in [np.number]:
-                df[col] = df[col].fillna(df[col].median())
+                # Use median imputation as a robust default
+                median_val = df[col].median()
+                df[col] = df[col].fillna(median_val)
             else:
+                # Use mode imputation for categorical features
                 mode_val = df[col].mode()
                 if not mode_val.empty:
                     df[col] = df[col].fillna(mode_val[0])
+                else:
+                    # Handle cases where mode might be empty (e.g., all NaNs or mixed types)
+                    df[col] = df[col].fillna('Unknown') # Fill with a placeholder
 
     # Extract Title from Name
     if 'Name' in df.columns:
         df['Title'] = df['Name'].astype(str).str.extract(r' ([A-Za-z]+)\.', expand=False)
-        rare_titles = ['Lady', 'Countess', 'Capt', 'Col', 'Don', 'Dr', 'Major', 'Rev', 'Sir', 'Jonkheer', 'Dona', 'Mlle', 'Ms', 'Mme']
+        # Expanded list of rare titles to be more comprehensive
+        rare_titles = ['Lady', 'Countess', 'Capt', 'Col', 'Don', 'Dr', 'Major', 'Rev', 'Sir', 'Jonkheer', 'Dona', 'Mlle', 'Ms', 'Mme', 'Master', 'Mrs', 'Mr', 'Miss']
         df['Title'] = df['Title'].replace(rare_titles, 'Rare')
         df['Title'] = df['Title'].replace({'Mlle': 'Miss', 'Ms': 'Miss', 'Mme': 'Mrs'})
         df = df.drop(columns=['Name'])
@@ -60,19 +67,25 @@ def engineer_features(df):
     
     # Ticket related features
     if 'Ticket' in df.columns:
-        df['TicketPrefix'] = df['Ticket'].str.extract(r'^([A-Za-z\./ ]+)', expand=False).fillna('None')
+        # More robust ticket prefix extraction
+        df['TicketPrefix'] = df['Ticket'].str.extract(r'^([A-Za-z\./ -]+)', expand=False).fillna('None').str.strip()
         df['TicketNumber'] = df['Ticket'].str.extract(r'(\d+)$', expand=False).fillna(0).astype(int)
         df = df.drop(columns=['Ticket'])
 
     # Cabin deck & indicator
     if 'Cabin' in df.columns:
         df['HasCabin'] = df['Cabin'].notna().astype(int)
-        df['Deck'] = df['Cabin'].apply(lambda x: x[0] if pd.notna(x) else 'U')
+        df['Deck'] = df['Cabin'].apply(lambda x: str(x)[0] if pd.notna(x) else 'U')
         df = df.drop(columns=['Cabin'])
 
     # Feature interactions
     if 'Pclass' in df.columns and 'Fare' in df.columns:
         df['Pclass_Fare'] = df['Pclass'] * df['Fare']
+        
+    # Age bins
+    if 'Age' in df.columns:
+        df['AgeBin'] = pd.cut(df['Age'], bins=[0, 12, 18, 35, 60, np.inf], labels=['Child', 'Teen', 'YoungAdult', 'Adult', 'Senior'])
+        df['AgeBin'] = df['AgeBin'].astype(str).fillna('Unknown') # Fill NaNs from binning if any
 
     return df
 
@@ -89,18 +102,27 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     if target_col not in df.columns:
         raise ValueError(f"Target column '{target_col}' not found in the dataset.")
     
+    # Drop rows where the target is missing, as these cannot be used for training
+    initial_rows = len(df)
     df = df.dropna(subset=[target_col])
+    if len(df) < initial_rows:
+        print(f"Dropped {initial_rows - len(df)} rows with missing target values.")
+    
     y_raw = df[target_col]
     X_raw = df.drop(columns=[target_col])
 
-    # Clean column names
+    # Clean column names to be safe for different model backends
     X_raw.columns = [re.sub(r'[^\w\s]', '', col).replace(' ', '_') for col in X_raw.columns]
 
-    # Detect and drop ID-like column from train (first col if all unique)
+    # Detect and drop ID-like column from train (first col if all unique and likely an ID)
     id_col_name = None
     if X_raw.iloc[:, 0].nunique() == len(X_raw):
-        id_col_name = X_raw.columns[0]
-        X_raw = X_raw.drop(columns=[id_col_name])
+        # Heuristic: if first column is unique and has a name like PassengerId or similar, consider it an ID
+        potential_id_names = ['passengerid', 'id', 'index']
+        if X_raw.columns[0].lower() in potential_id_names:
+            id_col_name = X_raw.columns[0]
+            X_raw = X_raw.drop(columns=[id_col_name])
+            print(f"Dropped potential ID column: {id_col_name}")
 
     # Feature engineering
     X = engineer_features(X_raw)
@@ -122,51 +144,72 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     categorical_features = X.select_dtypes(include=['object', 'category']).columns.tolist()
     numerical_features = X.select_dtypes(include=np.number).columns.tolist()
 
-    # Update preprocessor to include StandardScaler for numerical features
+    # Updated preprocessor to include StandardScaler for numerical features and OneHotEncoder for categorical
     preprocessor = ColumnTransformer(
         transformers=[
             ('num', Pipeline([('scaler', StandardScaler())]), numerical_features),
-            ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), categorical_features)
+            ('cat', Pipeline([('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))]), categorical_features)
         ],
-        remainder='passthrough' # Keep other columns if any
+        remainder='passthrough' # Keep other columns if any (though unlikely with current feature engineering)
     )
 
-    # Model definitions - slightly tuned hyperparameters for better performance
+    # Model definitions - Tuned hyperparameters and increased n_estimators for better accuracy
     if task == 'classification':
         estimators = [
             ('xgb', XGBClassifier(
-                n_estimators=500, max_depth=4, learning_rate=0.02,
-                subsample=0.85, colsample_bytree=0.85, min_child_weight=4,
-                gamma=0.25, reg_alpha=0.1, reg_lambda=1.2,
+                n_estimators=800, # Increased estimators
+                max_depth=5, # Slightly increased depth
+                learning_rate=0.015, # Slightly reduced learning rate
+                subsample=0.8,
+                colsample_bytree=0.8,
+                min_child_weight=3, # Reduced min_child_weight
+                gamma=0.2, # Reduced gamma
+                reg_alpha=0.1,
+                reg_lambda=1.3,
                 scale_pos_weight=scale_pos_weight,
                 eval_metric='logloss',
-                random_state=42, n_jobs=-1
+                random_state=42, n_jobs=-1, use_label_encoder=False # Explicitly disable label encoder
             )),
             ('lgb', LGBMClassifier(
-                n_estimators=500, max_depth=-1, learning_rate=0.02,
-                num_leaves=40, subsample=0.85, colsample_bytree=0.85,
-                reg_alpha=0.1, reg_lambda=1.2,
+                n_estimators=800, # Increased estimators
+                max_depth=-1, # Keep max_depth as -1 for LGBM to control depth by num_leaves
+                learning_rate=0.015, # Slightly reduced learning rate
+                num_leaves=50, # Increased num_leaves
+                subsample=0.8,
+                colsample_bytree=0.8,
+                reg_alpha=0.1,
+                reg_lambda=1.3,
                 class_weight='balanced',
                 random_state=42, verbose=-1, n_jobs=-1
             )),
             ('cat', CatBoostClassifier(
-                iterations=500, depth=7, learning_rate=0.02,
-                l2_leaf_reg=4.0, border_count=255, random_strength=1.2,
+                iterations=800, # Increased iterations
+                depth=8, # Increased depth
+                learning_rate=0.015, # Slightly reduced learning rate
+                l2_leaf_reg=5.0, # Increased L2 regularization
+                border_count=50, # Reduced border count for potentially finer splits
+                random_strength=1.0, # Reduced random strength
                 auto_class_weights='Balanced',
                 random_seed=42, verbose=0, thread_count=-1
             )),
             ('hist', HistGradientBoostingClassifier(
-                max_iter=500, max_depth=4, learning_rate=0.02,
-                l2_regularization=1.2, class_weight='balanced',
+                max_iter=800, # Increased iterations
+                max_depth=5, # Increased depth
+                learning_rate=0.015, # Slightly reduced learning rate
+                l2_regularization=1.3, # Increased regularization
+                class_weight='balanced',
                 random_state=42
             ))
         ]
         # Using Logistic Regression with L2 regularization for the final estimator
-        final_estimator = LogisticRegression(C=0.05, max_iter=1500, solver='liblinear', class_weight='balanced', random_state=42)
+        # Increased regularization strength and iterations for better convergence
+        final_estimator = LogisticRegression(C=0.03, max_iter=2000, solver='liblinear', class_weight='balanced', random_state=42)
+        
+        # Increased CV folds for stacking to get more robust meta-features
         ensemble = StackingClassifier(
             estimators=estimators,
             final_estimator=final_estimator,
-            cv=5,  # Increased CV folds for stacking
+            cv=7,  # Increased CV folds for stacking
             stack_method='predict_proba',
             n_jobs=-1,
             passthrough=False
@@ -174,34 +217,53 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     else:
         estimators = [
             ('xgb', XGBRegressor(
-                n_estimators=500, max_depth=4, learning_rate=0.02,
-                subsample=0.85, colsample_bytree=0.85,
-                reg_alpha=0.1, reg_lambda=1.2,
+                n_estimators=800,
+                max_depth=5,
+                learning_rate=0.015,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                min_child_weight=3,
+                gamma=0.2,
+                reg_alpha=0.1,
+                reg_lambda=1.3,
                 random_state=42, n_jobs=-1
             )),
             ('lgb', LGBMRegressor(
-                n_estimators=500, max_depth=-1, learning_rate=0.02,
-                num_leaves=40, subsample=0.85, colsample_bytree=0.85,
-                reg_alpha=0.1, reg_lambda=1.2,
+                n_estimators=800,
+                max_depth=-1,
+                learning_rate=0.015,
+                num_leaves=50,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                reg_alpha=0.1,
+                reg_lambda=1.3,
                 random_state=42, verbose=-1, n_jobs=-1
             )),
             ('cat', CatBoostRegressor(
-                iterations=500, depth=7, learning_rate=0.02,
-                l2_leaf_reg=4.0, border_count=255, random_strength=1.2,
+                iterations=800,
+                depth=8,
+                learning_rate=0.015,
+                l2_leaf_reg=5.0,
+                border_count=50,
+                random_strength=1.0,
                 random_seed=42, verbose=0, thread_count=-1
             )),
             ('hist', HistGradientBoostingRegressor(
-                max_iter=500, max_depth=4, learning_rate=0.02,
-                l2_regularization=1.2,
+                max_iter=800,
+                max_depth=5,
+                learning_rate=0.015,
+                l2_regularization=1.3,
                 random_state=42
             ))
         ]
         # RidgeCV with more folds for the final estimator
-        final_estimator = RidgeCV(cv=5)
+        final_estimator = RidgeCV(cv=7)
+        
+        # Increased CV folds for stacking
         ensemble = StackingRegressor(
             estimators=estimators,
             final_estimator=final_estimator,
-            cv=5, # Increased CV folds for stacking
+            cv=7, # Increased CV folds for stacking
             n_jobs=-1,
             passthrough=False
         )
@@ -211,9 +273,11 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
 
     # Cross-validation
     if task == 'classification':
-        cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+        # Increased CV folds for more reliable score
+        cv = StratifiedKFold(n_splits=7, shuffle=True, random_state=42)
     else:
-        cv = KFold(n_splits=5, shuffle=True, random_state=42)
+        # Increased CV folds for more reliable score
+        cv = KFold(n_splits=7, shuffle=True, random_state=42)
 
     scores = []
     for fold, (train_idx, val_idx) in enumerate(tqdm(list(cv.split(X, y)), desc=f"CV Progress (Task: {task})")):
@@ -224,6 +288,7 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         try:
             fold_pipeline.fit(X_train, y_train)
             if task == 'classification':
+                # Predict probabilities for the positive class
                 y_pred = fold_pipeline.predict_proba(X_val)[:, 1]
                 score = scoring_fn(y_val, y_pred)
             else:
@@ -232,13 +297,12 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
             scores.append(score)
         except Exception as e:
             print(f"Error during training/evaluation of fold {fold}: {e}")
-            # Optionally, you could record a NaN or a very low score for this fold
             scores.append(np.nan)
 
     # Filter out NaNs before calculating the mean
     valid_scores = [s for s in scores if not np.isnan(s)]
     if not valid_scores:
-        final_score = 0.0 # Or raise an error if no folds were successful
+        final_score = 0.0
         print("Warning: All CV folds failed. Setting final score to 0.")
     else:
         final_score = float(np.mean(valid_scores))
@@ -258,7 +322,7 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         
         # Capture ID column before it might be dropped or transformed
         # Assume the first column is the ID column if no specific ID col from config
-        test_id_series = test_df_raw.iloc[:, 0]
+        test_id_series = test_df_raw.iloc[:, 0].copy() # .copy() to avoid SettingWithCopyWarning
         test_id_column_name = test_df_raw.columns[0] # Store name for potential removal
 
         test_df = test_df_raw.copy()
@@ -270,7 +334,8 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         elif test_id_column_name in test_df.columns: # Fallback to the cleaned original first column name
              test_X_raw = test_df.drop(columns=[test_id_column_name])
         else:
-             test_X_raw = test_df # Should not happen if test_df_raw has at least one column
+             # This case should be rare but ensures we don't error out if test_df is empty
+             test_X_raw = test_df 
 
         # Drop target column if it accidentally exists in test features
         if target_col in test_X_raw.columns:
@@ -279,10 +344,13 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         test_X = engineer_features(test_X_raw)
 
         # Ensure test features match training features, imputing missing columns with 0
-        missing_cols = set(X.columns) - set(test_X.columns)
-        for c in missing_cols:
-            test_X[c] = 0
-        test_X = test_X[X.columns] # Ensure the order of columns is the same
+        # This is crucial for consistent preprocessing between train and test sets
+        missing_cols_in_test = set(X.columns) - set(test_X.columns)
+        for c in missing_cols_in_test:
+            test_X[c] = 0 # Impute with 0 as a safe default for numerical features
+
+        # Ensure the order of columns in test_X matches X
+        test_X = test_X[X.columns]
 
         if task == 'classification':
             preds = pipeline.predict_proba(test_X)[:, 1]
