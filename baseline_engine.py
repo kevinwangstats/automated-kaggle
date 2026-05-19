@@ -59,7 +59,7 @@ def load_config(config_path="config.yaml"):
         config["test_path"] = os.path.join(repo_root, config["test_path"])
     return config
 
-def train_and_evaluate(config_path="config.yaml"):
+def train_and_evaluate(config_path="config.yaml", output_dir="."):
     # 1. Load Configuration & Data
     config = load_config(config_path)
     dataset_path = config.get("dataset_path")
@@ -140,8 +140,8 @@ def train_and_evaluate(config_path="config.yaml"):
         scores.append(score)
 
     final_score = np.mean(scores)
-    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-    with open(os.path.join(SCRIPT_DIR, "metrics.json"), "w") as f:
+    os.makedirs(output_dir, exist_ok=True)
+    with open(os.path.join(output_dir, "metrics.json"), "w") as f:
         json.dump({{"cv_score": final_score}}, f)
 
     # 6. Generate Submission (if test_path is provided)
@@ -162,7 +162,7 @@ def train_and_evaluate(config_path="config.yaml"):
         if len(test_df.columns) > 0:
              submission[test_df.columns[0]] = test_df.iloc[:, 0]
         submission[target_col] = preds
-        submission.to_csv(os.path.join(SCRIPT_DIR, "raw_submission.csv"), index=False)
+        submission.to_csv(os.path.join(output_dir, "raw_submission.csv"), index=False)
         print("Saved raw_submission.csv")
 
     return final_score
@@ -170,8 +170,9 @@ def train_and_evaluate(config_path="config.yaml"):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default="config.yaml", help="Path to config file")
+    parser.add_argument("--output_dir", type=str, default=".", help="Directory to save outputs")
     args = parser.parse_args()
-    train_and_evaluate(args.config)
+    train_and_evaluate(args.config, args.output_dir)
 '''
     return script
 
@@ -323,13 +324,9 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
         
         # Generate the script for the best model
         script_content = create_template_script(dataset_path, target_col, best_model, test_path, custom_metric, max_rows)
-        if workspace_mgr:
-            workspace_mgr.write_file("train_model.py", script_content)
-            script_path = workspace_mgr.get_file_path("train_model.py")
-        else:
-            with open("train_model.py", "w") as f:
-                f.write(script_content)
-            script_path = "train_model.py"
+        with open("train_model.py", "w") as f:
+            f.write(script_content)
+        script_path = "train_model.py"
             
         return best_score, script_path, task
 

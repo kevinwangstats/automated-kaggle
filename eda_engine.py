@@ -98,9 +98,6 @@ def perform_eda(dataset_path: str, target_col: str, output_path: str = "EDA.md",
         ]
 
         
-        if workspace_mgr:
-            output_path = workspace_mgr.get_file_path(output_path)
-            
         with open(output_path, "w") as f:
             f.write("\n".join(eda_content))
             

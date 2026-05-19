@@ -33,81 +33,8 @@ def load_config(config_path="config.yaml"):
     with open(config_path, "r") as f:
         return yaml.safe_load(f)
 
-
-class FamilyFeatures(BaseEstimator, TransformerMixin):
-    """Create family size and is_alone from SibSp and Parch."""
-
-    def __init__(self):
-        pass
-
-    def fit(self, X, y=None):
-        return self
-
-    def transform(self, X):
-        X = pd.DataFrame(X).copy()
-        if "SibSp" in X.columns and "Parch" in X.columns:
-            X["family_size"] = X["SibSp"] + X["Parch"] + 1
-            X["is_alone"] = (X["family_size"] == 1).astype(int)
-        return X
-
-
-class TicketFrequencyEncoder(BaseEstimator, TransformerMixin):
-    """
-    Computes ticket frequency from the training set and maps it to both
-    train and test. Also calculates fare_per_person when Fare exists.
-    """
-
-    def __init__(self):
-        self.ticket_freq_map_ = None
-
-    def fit(self, X, y=None):
-        X = pd.DataFrame(X)
-        if "Ticket" in X.columns:
-            ticket_col = X["Ticket"].astype(str)
-            self.ticket_freq_map_ = ticket_col.value_counts().to_dict()
-        else:
-            self.ticket_freq_map_ = {}
-        return self
-
-    def transform(self, X):
-        X = pd.DataFrame(X).copy()
-        if "Ticket" in X.columns and self.ticket_freq_map_ is not None:
-            X["ticket_freq"] = (
-                X["Ticket"]
-                .astype(str)
-                .map(self.ticket_freq_map_)
-                .fillna(1)
-                .astype(int)
-            )
-            if "Fare" in X.columns:
-                X["fare_per_person"] = X["Fare"] / X["ticket_freq"].clip(lower=1)
-        return X
-
-
-def engineer_features(df):
-    """Creates generic features from string columns: length, word count, title, prefix, number."""
-    df = df.copy()
-    for col in df.select_dtypes(include=["object"]).columns:
-        s = df[col].astype(str)
-        # Basic string features
-        df[col + "_len"] = s.str.len()
-        df[col + "_wordcnt"] = s.str.count(" ") + 1
-
-        # Extract title pattern: word preceding a period after a comma, e.g., "Mr.", "Mrs."
-        title = s.str.extract(r",\s*(\w+)\.", expand=False)
-        df[col + "_title"] = title.fillna("Unknown")
-
-        # Extract prefix (leading letters before a digit), e.g., "C" from "C85"
-        prefix = s.str.extract(r"^([A-Za-z]+)", expand=False)
-        df[col + "_prefix"] = prefix.fillna("Unknown")
-
-        # Extract numeric part
-        numbers = s.str.extract(r"(\d+)", expand=False)
-        df[col + "_number"] = pd.to_numeric(numbers, errors="coerce")
-    return df
-
-
-def train_and_evaluate(config_path="config.yaml"):
+def train_and_evaluate(config_path="config.yaml", output_dir="."):
+    # 1. Load Configuration & Data
     config = load_config(config_path)
     dataset_path = config.get("dataset_path")
     target_col = config.get("target_col")
@@ -239,8 +166,8 @@ def train_and_evaluate(config_path="config.yaml"):
     # Titanic run, fitting it on the whole train set within the pipeline step 
     # is a standard pragmatic choice.
     
-    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-    with open(os.path.join(SCRIPT_DIR, "metrics.json"), "w") as f:
+    os.makedirs(output_dir, exist_ok=True)
+    with open(os.path.join(output_dir, "metrics.json"), "w") as f:
         json.dump({"cv_score": final_score}, f)
 
     # Submission generation
@@ -271,7 +198,7 @@ def train_and_evaluate(config_path="config.yaml"):
         if len(test_df.columns) > 0:
              submission[test_df.columns[0]] = test_df.iloc[:, 0]
         submission[target_col] = preds
-        submission.to_csv(os.path.join(SCRIPT_DIR, "raw_submission.csv"), index=False)
+        submission.to_csv(os.path.join(output_dir, "raw_submission.csv"), index=False)
         print("Saved raw_submission.csv")
 
     return cv_score
@@ -280,5 +207,6 @@ def train_and_evaluate(config_path="config.yaml"):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default="config.yaml", help="Path to config file")
+    parser.add_argument("--output_dir", type=str, default=".", help="Directory to save outputs")
     args = parser.parse_args()
-    train_and_evaluate(args.config)
+    train_and_evaluate(args.config, args.output_dir)

@@ -27,9 +27,8 @@ def run_training_script(script_path="train_model.py", timeout: int = 600, config
         
     # Run the script as a subprocess
     try:
-        cwd = workspace_mgr.workspace_dir if workspace_mgr else None
         abs_config = os.path.abspath(config_path) if config_path else "config.yaml"
-        cmd_script = os.path.basename(script_path) if workspace_mgr else script_path
+        output_dir = workspace_mgr.workspace_dir if workspace_mgr else "."
         
         # Pass REPO_ROOT so the generated script can resolve relative dataset paths
         # against the repository root, not the workspace or config file directory.
@@ -37,8 +36,8 @@ def run_training_script(script_path="train_model.py", timeout: int = 600, config
         env["REPO_ROOT"] = os.getcwd()
         
         result = subprocess.run(
-            ["python", cmd_script, "--config", abs_config],
-            cwd=cwd,
+            ["python", script_path, "--config", abs_config, "--output_dir", output_dir],
+            cwd=None, # Run from root
             env=env,
             capture_output=True,
             text=True,
@@ -74,6 +73,7 @@ def run_agent_loop(
     skip_confirmation: bool = False,
     timeout: int = 600,
     model: str = None,
+    temperature: float = 0.4,
     ollama_base_url: str = None,
     wandb_enabled: bool = False,
     wandb_project: str = None,
@@ -89,7 +89,7 @@ def run_agent_loop(
     current_best_score = base_score
     history = []
     
-    history_path = workspace_mgr.get_file_path("history.json") if workspace_mgr else "history.json"
+    history_path = "history.json"
     # Load history if exists
     if os.path.exists(history_path):
         try:
@@ -107,7 +107,7 @@ def run_agent_loop(
     if current_best_score is None:
         raise ValueError("base_score was None and could not be determined from history.")
 
-    eda_path = workspace_mgr.get_file_path("EDA.md") if workspace_mgr else "EDA.md"
+    eda_path = "EDA.md"
     eda_content = read_file(eda_path)
     
     start_iteration = len(history) + 1
@@ -121,7 +121,7 @@ def run_agent_loop(
         # so the LLM can read it and attempt to fix its own errors.
         git_mgr.checkout_branch(dataset_branch)
         
-        script_path = workspace_mgr.get_file_path("train_model.py") if workspace_mgr else "train_model.py"
+        script_path = "train_model.py"
         current_script = read_file(script_path)
         history_context = ""
         if len(history) > 0:
@@ -173,7 +173,7 @@ FIX ERRORS FIRST: If the history context above indicates the previous run failed
 
 IMPROVE SCORE: If the previous run succeeded, your goal is to propose a modified version of the script to improve the model via feature engineering, missing value handling, hyperparameter tuning, or architecture changes.
 
-Always ensure you write the final cross-validation score to a file named `metrics.json` and predictions to `raw_submission.csv` in the EXACT SAME DIRECTORY as the script itself using `os.path.join(os.path.dirname(os.path.abspath(__file__)), ...)`. Do not use generic relative paths like `"metrics.json"`. The format should be: `{{"cv_score": final_score}}`.
+Always ensure your script accepts an `--output_dir` command-line argument using `argparse`. You MUST write the final cross-validation score to a file named `metrics.json` and predictions to `raw_submission.csv` inside this `output_dir` using `os.path.join(output_dir, ...)`. Do NOT use `os.path.dirname(__file__)` or generic relative paths. The format for metrics should be: `{{"cv_score": final_score}}`.
 {pred_prob_instruction}
 Output ONLY the full modified Python code wrapped in python ...  blocks. Do not include other text.
 """
@@ -194,7 +194,7 @@ Output ONLY the full modified Python code wrapped in python ...  blocks. Do not 
             completion_kwargs = {
                 "model": model_name,
                 "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.4,
+                "temperature": temperature,
                 "request_timeout": 120  # Ensure LLM call doesn't hang indefinitely
             }
             # Ollama requires an api_base pointing to the local server
@@ -231,12 +231,9 @@ Output ONLY the full modified Python code wrapped in python ...  blocks. Do not 
         if not llm_summary:
             llm_summary = "No reasoning provided by LLM."
         
-        # Write new code directly to workspace
-        if workspace_mgr:
-            workspace_mgr.write_file("train_model.py", new_code)
-        else:
-            with open("train_model.py", "w") as f:
-                f.write(new_code)
+        # Write new code directly to root
+        with open("train_model.py", "w") as f:
+            f.write(new_code)
             
         try:
             log_stage(f"Evaluating Generated Code")
