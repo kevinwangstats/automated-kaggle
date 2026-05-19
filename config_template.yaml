@@ -39,6 +39,12 @@ test_path: "data/test.csv"
 # If not set, it defaults to the AUTOML_MODEL environment variable or gemini-2.5-flash-lite.
 model: ollama/qwen3.5:2b
 
+# temperature: The sampling temperature for the LLM. 
+# Higher values (e.g., 0.8) make output more random, lower values (e.g., 0.2) make it more focused and deterministic.
+# If not set, defaults to 0.4.
+# Examples: 0.2, 0.4, 0.7
+temperature: 0.4
+
 # iterations: The maximum number of improvement cycles the Agentic LLM should perform.
 # In each iteration, the LLM analyzes previous results and proposes script modifications.
 # Examples: 5, 10, 20, 50

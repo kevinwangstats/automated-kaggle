@@ -25,6 +25,7 @@ def main():
         iterations = config.get('iterations', 5)
         timeout = config.get('timeout', 600)
         model = config.get('model', None)
+        temperature = config.get('temperature', 0.4)
         ollama_base_url = config.get('ollama_base_url', None)
         max_rows = config.get('max_rows', 100000)
         
@@ -265,6 +266,7 @@ def main():
             skip_confirmation=args.yes,
             timeout=timeout,
             model=model,
+            temperature=temperature,
             ollama_base_url=ollama_base_url,
             wandb_enabled=wandb_enabled,
             wandb_project=wandb_project,

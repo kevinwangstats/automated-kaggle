@@ -73,6 +73,7 @@ def run_agent_loop(
     skip_confirmation: bool = False,
     timeout: int = 600,
     model: str = None,
+    temperature: float = 0.4,
     ollama_base_url: str = None,
     wandb_enabled: bool = False,
     wandb_project: str = None,
@@ -193,7 +194,7 @@ Output ONLY the full modified Python code wrapped in python ...  blocks. Do not 
             completion_kwargs = {
                 "model": model_name,
                 "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.4,
+                "temperature": temperature,
                 "request_timeout": 120  # Ensure LLM call doesn't hang indefinitely
             }
             # Ollama requires an api_base pointing to the local server
