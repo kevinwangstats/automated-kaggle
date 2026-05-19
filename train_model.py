@@ -239,42 +239,9 @@ def train_and_evaluate(config_path="config.yaml"):
     # Titanic run, fitting it on the whole train set within the pipeline step 
     # is a standard pragmatic choice.
     
-<<<<<<< HEAD
-    full_pipeline = Pipeline([
-        ("preprocessor", preprocessor),
-        ("search", RandomizedSearchCV(
-            estimator=stack,
-            param_distributions=param_grid,
-            n_iter=10,
-            cv=3,
-            scoring=scoring,
-            random_state=42,
-            n_jobs=-1,
-            verbose=1
-        ))
-    ])
-
-    print("\nRunning Budget-Constrained Hyperparameter Tuning...")
-    full_pipeline.fit(X_engineered, y)
-    
-    search_results = full_pipeline.named_steps["search"]
-    best_score = search_results.best_score_
-    
-    # If regression, convert back to positive RMSE for consistency
-    if task == "regression":
-        cv_score = -best_score
-    else:
-        cv_score = best_score
-        
-    print(f"Best CV Score ({scoring}): {cv_score:.6f}")
-
-    with open("metrics.json", "w") as f:
-        json.dump({"cv_score": cv_score}, f)
-=======
     SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
     with open(os.path.join(SCRIPT_DIR, "metrics.json"), "w") as f:
         json.dump({"cv_score": final_score}, f)
->>>>>>> main
 
     # Submission generation
     if test_path and os.path.exists(test_path):
@@ -298,16 +265,6 @@ def train_and_evaluate(config_path="config.yaml"):
         if task == "classification":
             preds = full_pipeline.predict_proba(test_X)[:, 1]
         else:
-<<<<<<< HEAD
-            preds = full_pipeline.predict(test_X)
-
-        submission = pd.DataFrame({
-            id_col_name: id_values,
-            target_col: preds
-        })
-
-        submission.to_csv("raw_submission.csv", index=False)
-=======
             preds = pipeline.predict(test_X)
             
         submission = pd.DataFrame()
@@ -315,7 +272,6 @@ def train_and_evaluate(config_path="config.yaml"):
              submission[test_df.columns[0]] = test_df.iloc[:, 0]
         submission[target_col] = preds
         submission.to_csv(os.path.join(SCRIPT_DIR, "raw_submission.csv"), index=False)
->>>>>>> main
         print("Saved raw_submission.csv")
 
     return cv_score
