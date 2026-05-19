@@ -192,7 +192,23 @@ def main():
                 print(f"[Info] Established current score: {base_score:.4f}")
             except Exception as e:
                 log_error("Failed to execute existing train_model.py", e)
-                raise ValueError("Cannot resume: existing train_model.py failed to execute.") from e
+                print("[Info] Falling back to regenerating a fresh baseline...")
+                eda_path = perform_eda(dataset_path, target_col, max_rows=max_rows, workspace_mgr=workspace_mgr)
+                base_score, script_path, task = evaluate_baselines(
+                    dataset_path=dataset_path,
+                    target_col=target_col,
+                    test_path=test_path,
+                    custom_metric=metric,
+                    wandb_enabled=wandb_enabled,
+                    wandb_project=wandb_project,
+                    wandb_entity=wandb_entity,
+                    max_rows=max_rows,
+                    workspace_mgr=workspace_mgr
+                )
+                git_mgr.commit_all(f"Baseline Regenerated (broken resume) | CV Score: {base_score:.4f}")
+                print(f"[Info] Regenerated baseline score: {base_score:.4f}")
+                # Skip human intervention logging since we regenerated
+                is_modified = False
 
             # 3. Log HUMAN_INTERVENTION if modified, now using the evaluated score
             if is_modified:
