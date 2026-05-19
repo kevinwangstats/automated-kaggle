@@ -72,7 +72,7 @@ max_rows: ~
 # Prevents the pipeline from hanging on infinite loops or extremely slow training code.
 # Examples: 300, 600, 1200, 3600
 # Generous timeout for CI runners
-timeout: 300
+timeout: 600
 
 # --- KAGGLE SUBMISSION OPTIONS ---
 
