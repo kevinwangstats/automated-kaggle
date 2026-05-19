@@ -5,33 +5,29 @@ import json
 import os
 import re
 import argparse
-import warnings
-from sklearn.model_selection import KFold, RandomizedSearchCV
-from sklearn.preprocessing import (
-    LabelEncoder,
-    OneHotEncoder,
-    StandardScaler,
-    TargetEncoder,
-)
+from sklearn.model_selection import KFold, cross_val_score
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-from sklearn.impute import SimpleImputer
-from sklearn.experimental import enable_iterative_imputer
-from sklearn.impute import IterativeImputer
-from sklearn.metrics import roc_auc_score, mean_squared_error
-from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.linear_model import LogisticRegression, Ridge
-from sklearn.ensemble import StackingClassifier, StackingRegressor
+from sklearn.metrics import make_scorer, roc_auc_score, mean_squared_error
+from sklearn.ensemble import VotingClassifier, VotingRegressor
 from xgboost import XGBClassifier, XGBRegressor
 from lightgbm import LGBMClassifier, LGBMRegressor
 from catboost import CatBoostClassifier, CatBoostRegressor
-
-warnings.filterwarnings("ignore")
-
+from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
+from tqdm import tqdm
 
 def load_config(config_path="config.yaml"):
     with open(config_path, "r") as f:
-        return yaml.safe_load(f)
+        config = yaml.safe_load(f)
+    # Resolve relative dataset paths against the repo root (passed via env var),
+    # NOT the config file directory, since configs may live in subdirectories.
+    repo_root = os.environ.get("REPO_ROOT", os.getcwd())
+    if config.get("dataset_path") and not os.path.isabs(config.get("dataset_path")):
+        config["dataset_path"] = os.path.join(repo_root, config["dataset_path"])
+    if config.get("test_path") and not os.path.isabs(config.get("test_path")):
+        config["test_path"] = os.path.join(repo_root, config["test_path"])
+    return config
 
 def train_and_evaluate(config_path="config.yaml", output_dir="."):
     # 1. Load Configuration & Data
@@ -40,157 +36,120 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     target_col = config.get("target_col")
     test_path = config.get("test_path")
 
-    # Read data
     df = pd.read_csv(dataset_path, nrows=None)
+    
+    # Basic Preprocessing
     df = df.dropna(subset=[target_col])
     y_raw = df[target_col]
     X = df.drop(columns=[target_col])
-
-    # Task detection
-    task = "classification" if y_raw.nunique() < 20 else "regression"
-    if task == "classification":
+    
+    X.columns = [re.sub(r'[^\w\s]', '', col).replace(' ', '_') for col in X.columns]
+    
+    task = 'classification' if y_raw.nunique() < 20 else 'regression'
+    if task == 'classification':
         le_y = LabelEncoder()
         y = le_y.fit_transform(y_raw)
     else:
-        y = y_raw.values
+        y = y_raw
 
-    # ID column preservation for submission
-    id_cols = [
-        col for col in X.columns if "id" in col.lower() and X[col].nunique() == len(X)
-    ]
-    
-    # Feature engineering
-    X_engineered = engineer_features(X)
-    X_engineered = FamilyFeatures().fit_transform(X_engineered)
-    tf_enc = TicketFrequencyEncoder()
-    X_engineered = tf_enc.fit_transform(X_engineered)
-
-    # Drop ID columns from features but keep track for submission later
-    if id_cols:
-        X_engineered = X_engineered.drop(columns=id_cols, errors="ignore")
-
-    # Final feature groups
-    categorical_cols = X_engineered.select_dtypes(include=["object"]).columns.tolist()
-    numerical_cols = X_engineered.select_dtypes(include=np.number).columns.tolist()
-
-    # Split categorical features into low and high cardinality for different encoding
-    low_card_cats = [c for c in categorical_cols if X_engineered[c].nunique() <= 10]
-    high_card_cats = [c for c in categorical_cols if X_engineered[c].nunique() > 10]
-
-    # Preprocessing pipelines
-    numeric_transformer = Pipeline(
-        [
-            ("imputer", IterativeImputer(random_state=42, max_iter=10, initial_strategy="median")),
-            ("scaler", StandardScaler()),
-        ]
-    )
-
-    low_card_transformer = Pipeline(
-        [
-            ("imputer", SimpleImputer(strategy="constant", fill_value="MISSING")),
-            ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
-        ]
-    )
-
-    high_card_transformer = Pipeline(
-        [
-            ("imputer", SimpleImputer(strategy="constant", fill_value="MISSING")),
-            ("target", TargetEncoder(random_state=42)),
-        ]
-    )
+    # 2. Define Preprocessing Pipeline
+    try:
+        categorical_features = X.select_dtypes(include=['object', 'category', 'str']).columns
+    except TypeError:
+        categorical_features = X.select_dtypes(include=['object', 'category']).columns
+    numerical_features = X.select_dtypes(include=np.number).columns
 
     preprocessor = ColumnTransformer(
         transformers=[
-            ("num", numeric_transformer, numerical_cols),
-            ("low_cat", low_card_transformer, low_card_cats),
-            ("high_cat", high_card_transformer, high_card_cats),
+            ('num', 'passthrough', numerical_features),
+            ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), categorical_features)
         ],
-        remainder="drop",
+        remainder='passthrough'
     )
 
-    # Base estimators for Stacking
-    if task == "classification":
-        xgb = XGBClassifier(random_state=42, use_label_encoder=False, eval_metric="logloss", verbosity=0)
-        lgb = LGBMClassifier(random_state=42, verbose=-1)
-        cat = CatBoostClassifier(random_state=42, verbose=0)
-        
-        stack = StackingClassifier(
-            estimators=[("xgb", xgb), ("lgb", lgb), ("cat", cat)],
-            final_estimator=LogisticRegression(max_iter=1000),
-            cv=3,
-            n_jobs=-1
-        )
-        
-        # Grid parameters are relative to the 'stack' object
-        param_grid = {
-            "xgb__n_estimators": [100, 300],
-            "xgb__learning_rate": [0.01, 0.05, 0.1],
-            "xgb__max_depth": [3, 5, 7],
-            "lgb__n_estimators": [100, 300],
-            "lgb__learning_rate": [0.01, 0.05, 0.1],
-            "lgb__max_depth": [3, 5, 7],
-            "cat__iterations": [100, 300],
-            "cat__learning_rate": [0.01, 0.05, 0.1],
-            "cat__depth": [3, 5, 7],
-        }
-        scoring = "roc_auc"
-    else:
-        xgb = XGBRegressor(random_state=42, verbosity=0)
-        lgb = LGBMRegressor(random_state=42, verbose=-1)
-        cat = CatBoostRegressor(random_state=42, verbose=0)
-        
-        stack = StackingRegressor(
-            estimators=[("xgb", xgb), ("lgb", lgb), ("cat", cat)],
-            final_estimator=Ridge(),
-            cv=3,
-            n_jobs=-1
-        )
-        
-        param_grid = {
-            "xgb__n_estimators": [100, 300],
-            "xgb__learning_rate": [0.01, 0.05, 0.1],
-            "xgb__max_depth": [3, 5, 7],
-            "lgb__n_estimators": [100, 300],
-            "lgb__learning_rate": [0.01, 0.05, 0.1],
-            "lgb__max_depth": [3, 5, 7],
-            "cat__iterations": [100, 300],
-            "cat__learning_rate": [0.01, 0.05, 0.1],
-            "cat__depth": [3, 5, 7],
-        }
-        scoring = "neg_mean_squared_error"
+    # 3. Model Initialization (Multi-Model Ensemble)
+    models = []
+    try:
+        if task == 'classification':
+            models.append(('xgb', XGBClassifier(random_state=42)))
+        else:
+            models.append(('xgb', XGBRegressor(random_state=42)))
+    except Exception: pass
+    try:
+        if task == 'classification':
+            models.append(('lgb', LGBMClassifier(random_state=42, verbose=-1)))
+        else:
+            models.append(('lgb', LGBMRegressor(random_state=42, verbose=-1)))
+    except Exception: pass
+    try:
+        if task == 'classification':
+            models.append(('cat', CatBoostClassifier(random_state=42, verbose=0)))
+        else:
+            models.append(('cat', CatBoostRegressor(random_state=42, verbose=0)))
+    except Exception: pass
+    try:
+        if task == 'classification':
+            models.append(('hist', HistGradientBoostingClassifier(random_state=42)))
+        else:
+            models.append(('hist', HistGradientBoostingRegressor(random_state=42)))
+    except Exception: pass
 
-    # Wrap the stack in RandomizedSearchCV
-    # Note: We keep the preprocessor OUTSIDE the search to avoid fitting it 
-    # many times unnecessarily, BUT TargetEncoder technically should be 
-    # inside CV folds to be 100% leak-proof. However, for a budget-constrained
-    # Titanic run, fitting it on the whole train set within the pipeline step 
-    # is a standard pragmatic choice.
+    if not models: raise RuntimeError("No models could be initialized.")
+    if task == 'classification':
+        ensemble = VotingClassifier(estimators=models, voting='soft')
+    else:
+        ensemble = VotingRegressor(estimators=models)
+
+    # 4. Create Full Pipeline
+    pipeline = Pipeline(steps=[('preprocessor', preprocessor),
+                               ('classifier', ensemble)])
     
+    # 5. Cross Validation
+    cv = KFold(n_splits=5, shuffle=True, random_state=42)
+    scoring = 'roc_auc'
+    
+    print(f"Running Cross-Validation (folds=5)...")
+    scores = []
+    # Manual loop to show progress
+    for train_idx, val_idx in tqdm(list(cv.split(X, y)), desc="CV Progress"):
+        X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+        y_train, y_val = y[train_idx], y[val_idx]
+        
+        from sklearn.base import clone
+        fold_pipeline = clone(pipeline)
+        fold_pipeline.fit(X_train, y_train)
+        
+        # Scoring
+        if task == 'classification':
+            if scoring == 'roc_auc':
+                from sklearn.metrics import roc_auc_score
+                y_pred = fold_pipeline.predict_proba(X_val)[:, 1]
+                score = roc_auc_score(y_val, y_pred)
+            else:
+                from sklearn.metrics import get_scorer
+                score = get_scorer(scoring)(fold_pipeline, X_val, y_val)
+        else:
+            from sklearn.metrics import get_scorer
+            score = get_scorer(scoring)(fold_pipeline, X_val, y_val)
+            
+        scores.append(score)
+
+    final_score = np.mean(scores)
     os.makedirs(output_dir, exist_ok=True)
     with open(os.path.join(output_dir, "metrics.json"), "w") as f:
         json.dump({"cv_score": final_score}, f)
 
-    # Submission generation
+    # 6. Generate Submission (if test_path is provided)
     if test_path and os.path.exists(test_path):
-        print("\nGenerating submission...")
-        test_df = pd.read_csv(test_path, nrows=None)
+        print("Generating submission...")
+        pipeline.fit(X, y)
+        test_df = pd.read_csv(test_path)
+        
+        # Ensure test columns match train columns before preprocessing
+        test_X = test_df[X.columns.intersection(test_df.columns)]
 
-        # ID preservation
-        id_col_name = test_df.columns[0]
-        id_values = test_df.iloc[:, 0].values
-
-        # Apply same engineering as training
-        test_X = engineer_features(test_df)
-        test_X = FamilyFeatures().fit_transform(test_X)
-        test_X = tf_enc.transform(test_X)
-
-        # Drop ID columns from test features
-        if id_cols:
-            test_X = test_X.drop(columns=[c for c in id_cols if c in test_X.columns], errors="ignore")
-
-        # Predictions using the best estimator found by search
-        if task == "classification":
-            preds = full_pipeline.predict_proba(test_X)[:, 1]
+        if task == 'classification':
+            preds = pipeline.predict_proba(test_X)[:, 1]
         else:
             preds = pipeline.predict(test_X)
             
@@ -201,8 +160,7 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         submission.to_csv(os.path.join(output_dir, "raw_submission.csv"), index=False)
         print("Saved raw_submission.csv")
 
-    return cv_score
-
+    return final_score
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
