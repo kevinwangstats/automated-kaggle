@@ -111,8 +111,9 @@ def submit_to_kaggle(config_path="config.yaml", commit_id=None, workspace_mgr=No
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
 
-    if not config.get("auto_kaggle_submit", False):
-        print("[kaggle_submit] auto_kaggle_submit is false or not set. Skipping automated Kaggle submission.")
+    auto_submit_val = str(config.get("auto_kaggle_submit", "never")).lower()
+    if auto_submit_val in ["false", "never"]:
+        print("[kaggle_submit] auto_kaggle_submit is false or never. Skipping automated Kaggle submission.")
         return
 
     sub_path = Path(workspace_mgr.get_file_path("submission.csv")) if workspace_mgr else Path(get_submission_path(config))
