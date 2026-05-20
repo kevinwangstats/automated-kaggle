@@ -9,6 +9,7 @@ import pandas as pd
 import yaml
 import os
 import argparse
+from pathlib import Path
 
 def get_submission_path(config):
     """
@@ -166,12 +167,6 @@ if __name__ == "__main__":
         submit_to_kaggle(args.config)
     elif args.format_only:
         format_submission(args.config)
-    else:
-        # Default behavior: do both
-        format_submission(args.config)
-        submit_to_kaggle(args.config)
-bmit_to_kaggle(args.config)
-ion(args.config)
     else:
         # Default behavior: do both
         format_submission(args.config)

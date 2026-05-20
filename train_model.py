@@ -24,9 +24,7 @@ from catboost import CatBoostClassifier, CatBoostRegressor
 from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
 from sklearn.base import clone
 from tqdm import tqdm
-import warnings
-
-warnings.filterwarnings('ignore')
+from pathlib import Path
 
 def load_config(config_path="config.yaml"):
     with open(config_path, "r") as f:
