@@ -1,3 +1,10 @@
+"""
+main.py
+
+The main orchestrator for the Agentic AutoML pipeline.
+Execute this script as the primary entry point:
+    python main.py --config config.yaml [-y] [--resume]
+"""
 import argparse
 import yaml
 from eda_engine import perform_eda
@@ -80,7 +87,7 @@ def main():
             git_mgr.ensure_dataset_branch(dataset_branch)
 
         # State detection: check the ROOT directory for tracked artifacts
-        has_previous_state = os.path.exists("history.json") and os.path.exists("train_model.py")
+        has_previous_state = Path("history.json").exists() and Path("train_model.py").exists()
                 
         should_resume = args.resume
         if has_previous_state and not args.resume:
@@ -105,13 +112,14 @@ def main():
             git_mgr.revert_changes()
             # Clean up root files to start completely fresh
             for f in ["train_model.py", "history.json", "EDA.md"]:
-                if os.path.exists(f): os.remove(f)
+                p = Path(f)
+                if p.exists(): p.unlink()
 
         wandb_project = dataset_branch
 
         if wandb_enabled:
             import wandb
-            run_id_file = workspace_mgr.get_file_path("wandb_run_id.txt") if workspace_mgr else "wandb_run_id.txt"
+            run_id_file = Path(workspace_mgr.get_file_path("wandb_run_id.txt")) if workspace_mgr else Path("wandb_run_id.txt")
             
             init_kwargs = {
                 "project": wandb_project,
@@ -127,7 +135,7 @@ def main():
                 }
             }
             
-            if should_resume and os.path.exists(run_id_file):
+            if should_resume and run_id_file.exists():
                 with open(run_id_file, "r") as f:
                     saved_run_id = f.read().strip()
                 if saved_run_id:
@@ -136,7 +144,7 @@ def main():
                     
             wandb.init(**init_kwargs)
             
-            if not should_resume or not os.path.exists(run_id_file):
+            if not should_resume or not run_id_file.exists():
                 with open(run_id_file, "w") as f:
                     f.write(wandb.run.id)
 
@@ -151,11 +159,11 @@ def main():
             
             import json
             import re
-            history_path = "history.json"
-            script_path = "train_model.py"
+            history_path = Path("history.json")
+            script_path = Path("train_model.py")
             
             history = []
-            if os.path.exists(history_path):
+            if history_path.exists():
                 try:
                     with open(history_path, "r") as f:
                         history = json.load(f)
@@ -163,7 +171,7 @@ def main():
                     pass
 
             current_code = ""
-            if os.path.exists(script_path):
+            if script_path.exists():
                 with open(script_path, "r") as f:
                     current_code = f.read().strip()
                     
@@ -238,6 +246,17 @@ def main():
                             f.write(f"\n- **Iter {len(history)}**: Score {base_score:.4f} (Commit: {git_mgr.get_current_commit()}) [MANUAL]\n")
                     except Exception:
                         pass
+                    
+                    # Auto-submit manual improvements to Kaggle
+                    try:
+                        import kaggle_submit
+                        raw_sub_path = Path(workspace_mgr.get_file_path("raw_submission.csv")) if workspace_mgr else Path("raw_submission.csv")
+                        if raw_sub_path.exists():
+                            log_stage(f"Automated Kaggle Submission for Manual Intervention (Iter {len(history)})")
+                            kaggle_submit.format_submission(args.config, workspace_mgr=workspace_mgr)
+                            kaggle_submit.submit_to_kaggle(args.config, commit_id=git_mgr.get_current_commit(), workspace_mgr=workspace_mgr)
+                    except Exception as e:
+                        log_error(f"Failed to submit manual intervention to Kaggle", e)
         else:
             # Phase 1: EDA
             eda_path = perform_eda(dataset_path, target_col, max_rows=max_rows, workspace_mgr=workspace_mgr)
@@ -262,7 +281,7 @@ def main():
 
         # Phase 3: Agentic Loop
         available_models = []
-        if os.path.exists("models_registry.yaml"):
+        if Path("models_registry.yaml").exists():
             try:
                 with open("models_registry.yaml", "r") as f:
                     reg = yaml.safe_load(f)
@@ -294,8 +313,8 @@ def main():
         )
         
         # Ensure we have a raw_submission.csv if we have a test_path
-        raw_sub_path = workspace_mgr.get_file_path("raw_submission.csv") if workspace_mgr else "raw_submission.csv"
-        if test_path and not os.path.exists(raw_sub_path):
+        raw_sub_path = Path(workspace_mgr.get_file_path("raw_submission.csv")) if workspace_mgr else Path("raw_submission.csv")
+        if test_path and not raw_sub_path.exists():
             log_stage("Generating Baseline Submission")
             try:
                 script_path = "train_model.py"
@@ -321,4 +340,6 @@ def main():
             wandb.finish()
 
 if __name__ == "__main__":
+    main()
+main__":
     main()
