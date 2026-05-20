@@ -46,9 +46,9 @@ test_path: "data/titanic/test.csv"
 # Examples: "gemini/gemini-2.0-flash", "openai/gpt-4o", "ollama/qwen2.5:7b", "deepseek/deepseek-v4-pro", "anthropic/claude-3-5-sonnet-20241022"
 # If not set, it defaults to the AUTOML_MODEL environment variable or gemini-2.5-flash-lite.
 # model: ollama/qwen3.5:2b
-model: gemini/gemini-2.5-flash-lite
+# model: gemini/gemini-2.5-flash-lite
 # model: deepseek/deepseek-v4-pro
-# model: moonshot/kimi-k2.6
+model: moonshot/kimi-k2.6
 temperature: 1
 
 # iterations: The maximum number of improvement cycles the Agentic LLM should perform.
