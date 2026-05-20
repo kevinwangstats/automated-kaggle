@@ -257,7 +257,6 @@ Output ONLY the full modified Python code wrapped in python ...  blocks. Do not 
             improved = (new_score > current_best_score) if higher_is_better else (new_score < current_best_score)
             
             if wandb_enabled:
-                import wandb
                 
                 wandb.log({
                     "cv_score": new_score, 
@@ -313,7 +312,7 @@ Output ONLY the full modified Python code wrapped in python ...  blocks. Do not 
                     should_submit = True
                     
                 if should_submit:
-                    import kaggle_submit
+
                     raw_sub_path = Path(workspace_mgr.get_file_path("raw_submission.csv")) if workspace_mgr else Path("raw_submission.csv")
                     if raw_sub_path.exists():
                         log_stage(f"Automated Kaggle Submission for Iteration {len(history)}")

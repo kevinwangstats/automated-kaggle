@@ -134,21 +134,18 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
         y_train, y_val = y[train_idx], y[val_idx]
         
-        from sklearn.base import clone
+        
         fold_pipeline = clone(pipeline)
         fold_pipeline.fit(X_train, y_train)
         
         # Scoring
         if task == 'classification':
             if scoring == 'roc_auc':
-                from sklearn.metrics import roc_auc_score
                 y_pred = fold_pipeline.predict_proba(X_val)[:, 1]
                 score = roc_auc_score(y_val, y_pred)
             else:
-                from sklearn.metrics import get_scorer
                 score = get_scorer(scoring)(fold_pipeline, X_val, y_val)
         else:
-            from sklearn.metrics import get_scorer
             score = get_scorer(scoring)(fold_pipeline, X_val, y_val)
             
         scores.append(score)
@@ -255,8 +252,6 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
 
             # H2O is kept here for evaluation, but omitted from the generated ensemble script
             try:
-                import h2o
-                from h2o.sklearn import H2OAutoMLClassifier, H2OAutoMLRegressor
                 H2OAutoMLClassifier._estimator_type = "classifier"
                 H2OAutoMLRegressor._estimator_type = "regressor"
                 h2o.init(verbose=False)
@@ -328,7 +323,6 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
         log_metric(f"Best Baseline ({best_model})", best_score)
 
         if wandb_enabled:
-            import wandb
             wandb.log({"cv_score": best_score, "best_model": best_model, "iteration": 0})
         
         # Generate the script for the best model

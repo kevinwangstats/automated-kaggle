@@ -8,6 +8,7 @@ Can be run as an independent module to manually trigger a submission:
 import pandas as pd
 import yaml
 import os
+import subprocess
 import argparse
 from pathlib import Path
 
@@ -102,7 +103,6 @@ def submit_to_kaggle(config_path="config.yaml", commit_id=None, workspace_mgr=No
     Submits the formatted submission to Kaggle if auto_kaggle_submit is enabled.
     Includes the git commit ID in the submission message for provenance.
     """
-    import subprocess
     config_p = Path(config_path)
     if not config_p.exists():
         print(f"[kaggle_submit] Config file {config_path} not found.")
