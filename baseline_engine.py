@@ -1,3 +1,10 @@
+"""
+baseline_engine.py
+
+Generates and evaluates a baseline training script.
+Can be executed as an independent module to test baseline generation:
+    python baseline_engine.py --config config.yaml --output_dir .workspaces/test
+"""
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import KFold, cross_val_score
@@ -45,6 +52,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.metrics import make_scorer, roc_auc_score, mean_squared_error
 from sklearn.ensemble import VotingClassifier, VotingRegressor
 {imports_str}
+from pathlib import Path
 from tqdm import tqdm
 
 def load_config(config_path="config.yaml"):
@@ -52,11 +60,11 @@ def load_config(config_path="config.yaml"):
         config = yaml.safe_load(f)
     # Resolve relative dataset paths against the repo root (passed via env var),
     # NOT the config file directory, since configs may live in subdirectories.
-    repo_root = os.environ.get("REPO_ROOT", os.getcwd())
-    if config.get("dataset_path") and not os.path.isabs(config.get("dataset_path")):
-        config["dataset_path"] = os.path.join(repo_root, config["dataset_path"])
-    if config.get("test_path") and not os.path.isabs(config.get("test_path")):
-        config["test_path"] = os.path.join(repo_root, config["test_path"])
+    repo_root = Path(os.environ.get("REPO_ROOT", Path.cwd()))
+    if config.get("dataset_path") and not Path(config.get("dataset_path")).is_absolute():
+        config["dataset_path"] = str(repo_root / config["dataset_path"])
+    if config.get("test_path") and not Path(config.get("test_path")).is_absolute():
+        config["test_path"] = str(repo_root / config["test_path"])
     return config
 
 def train_and_evaluate(config_path="config.yaml", output_dir="."):
@@ -140,12 +148,13 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         scores.append(score)
 
     final_score = np.mean(scores)
-    os.makedirs(output_dir, exist_ok=True)
-    with open(os.path.join(output_dir, "metrics.json"), "w") as f:
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    with open(output_path / "metrics.json", "w") as f:
         json.dump({{"cv_score": final_score}}, f)
 
     # 6. Generate Submission (if test_path is provided)
-    if test_path and os.path.exists(test_path):
+    if test_path and Path(test_path).exists():
         print("Generating submission...")
         pipeline.fit(X, y)
         test_df = pd.read_csv(test_path)
@@ -162,7 +171,7 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         if len(test_df.columns) > 0:
              submission[test_df.columns[0]] = test_df.iloc[:, 0]
         submission[target_col] = preds
-        submission.to_csv(os.path.join(output_dir, "raw_submission.csv"), index=False)
+        submission.to_csv(output_path / "raw_submission.csv", index=False)
         print("Saved raw_submission.csv")
 
     return final_score

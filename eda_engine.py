@@ -1,3 +1,11 @@
+"""
+eda_engine.py
+
+Performs automated Exploratory Data Analysis and generates EDA.md.
+It is primarily imported by the orchestrator, but can be run via Python shell:
+    >>> from eda_engine import perform_eda
+    >>> perform_eda("data/train.csv", "target_col")
+"""
 import pandas as pd
 import json
 from logger import log_stage, log_error

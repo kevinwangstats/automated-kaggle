@@ -1,3 +1,12 @@
+"""
+git_manager.py
+
+Handles isolated Git operations for data-branch versioning.
+Designed as an internal library module to provide the GitManager class.
+Usage:
+    >>> from git_manager import GitManager
+    >>> gm = GitManager()
+"""
 import git
 import os
 import re
@@ -33,7 +42,7 @@ def dataset_branch_from_dataset_path(dataset_path: str) -> str:
 
 class GitManager:
     def __init__(self, repo_path="."):
-        self.repo_path = os.path.abspath(repo_path)
+        self.repo_path = Path(repo_path).resolve()
         try:
             self.repo = git.Repo(self.repo_path)
         except git.exc.InvalidGitRepositoryError:

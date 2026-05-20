@@ -1,8 +1,18 @@
+"""
+agent_loop.py
+
+This module orchestrates the LLM improvement cycle.
+It is primarily designed to be imported and called by main.py.
+However, it can be tested independently in a Python shell:
+    >>> from agent_loop import run_agent_loop
+    >>> run_agent_loop(...)
+"""
 import os
 import json
 import re
 import subprocess
 import yaml
+from pathlib import Path
 from litellm import completion
 from logger import log_stage, log_error, log_metric
 from git_manager import GitManager
@@ -21,22 +31,22 @@ def read_file(filepath: str) -> str:
 
 def run_training_script(script_path="train_model.py", timeout: int = 600, config_path="config.yaml", workspace_mgr=None):
     # Ensure no stale metrics exist
-    metrics_path = workspace_mgr.get_file_path("metrics.json") if workspace_mgr else "metrics.json"
-    if os.path.exists(metrics_path):
-        os.remove(metrics_path)
+    metrics_path = Path(workspace_mgr.get_file_path("metrics.json")) if workspace_mgr else Path("metrics.json")
+    if metrics_path.exists():
+        metrics_path.unlink()
         
     # Run the script as a subprocess
     try:
-        abs_config = os.path.abspath(config_path) if config_path else "config.yaml"
-        output_dir = workspace_mgr.workspace_dir if workspace_mgr else "."
+        abs_config = Path(config_path).resolve() if config_path else Path("config.yaml").resolve()
+        output_dir = Path(workspace_mgr.workspace_dir).resolve() if workspace_mgr else Path(".").resolve()
         
         # Pass REPO_ROOT so the generated script can resolve relative dataset paths
         # against the repository root, not the workspace or config file directory.
         env = os.environ.copy()
-        env["REPO_ROOT"] = os.getcwd()
+        env["REPO_ROOT"] = str(Path.cwd())
         
         result = subprocess.run(
-            ["python", script_path, "--config", abs_config, "--output_dir", output_dir],
+            ["python", str(script_path), "--config", str(abs_config), "--output_dir", str(output_dir)],
             cwd=None, # Run from root
             env=env,
             capture_output=True,
@@ -50,7 +60,7 @@ def run_training_script(script_path="train_model.py", timeout: int = 600, config
         raise RuntimeError(f"Script Execution Failed:\n{result.stderr}")
         
     # Parse final score from metrics.json
-    if not os.path.exists(metrics_path):
+    if not metrics_path.exists():
         raise ValueError(f"Could not find metrics.json after script execution. Output was:\n{result.stdout}\n{result.stderr}")
         
     try:
@@ -60,7 +70,7 @@ def run_training_script(script_path="train_model.py", timeout: int = 600, config
             raise ValueError(f"metrics.json missing 'cv_score' key: {metrics}")
         return float(metrics["cv_score"])
     except json.JSONDecodeError:
-        raise ValueError(f"metrics.json is malformed. Content: {open('metrics.json', 'r').read()}")
+        raise ValueError(f"metrics.json is malformed. Content: {metrics_path.read_text()}")
 
 def run_agent_loop(
     dataset_path: str,
@@ -89,9 +99,9 @@ def run_agent_loop(
     current_best_score = base_score
     history = []
     
-    history_path = "history.json"
+    history_path = Path("history.json")
     # Load history if exists
-    if os.path.exists(history_path):
+    if history_path.exists():
         try:
             with open(history_path, "r") as f:
                 history = json.load(f)
@@ -173,7 +183,7 @@ FIX ERRORS FIRST: If the history context above indicates the previous run failed
 
 IMPROVE SCORE: If the previous run succeeded, your goal is to propose a modified version of the script to improve the model via feature engineering, missing value handling, hyperparameter tuning, or architecture changes.
 
-Always ensure your script accepts an `--output_dir` command-line argument using `argparse`. You MUST write the final cross-validation score to a file named `metrics.json` and predictions to `raw_submission.csv` inside this `output_dir` using `os.path.join(output_dir, ...)`. Do NOT use `os.path.dirname(__file__)` or generic relative paths. The format for metrics should be: `{{"cv_score": final_score}}`.
+Always ensure your script accepts an `--output_dir` command-line argument using `argparse`. You MUST write the final cross-validation score to a file named `metrics.json` and predictions to `raw_submission.csv` inside this `output_dir` using `pathlib.Path(output_dir) / ...`. Do NOT use generic relative paths. The format for metrics should be: `{{"cv_score": final_score}}`.
 {pred_prob_instruction}
 Output ONLY the full modified Python code wrapped in python ...  blocks. Do not include other text.
 """
@@ -270,8 +280,8 @@ Output ONLY the full modified Python code wrapped in python ...  blocks. Do not 
                 # Submit to Kaggle if auto_submit is on
                 try:
                     import kaggle_submit
-                    raw_sub_path = workspace_mgr.get_file_path("raw_submission.csv") if workspace_mgr else "raw_submission.csv"
-                    if os.path.exists(raw_sub_path):
+                    raw_sub_path = Path(workspace_mgr.get_file_path("raw_submission.csv")) if workspace_mgr else Path("raw_submission.csv")
+                    if raw_sub_path.exists():
                         log_stage(f"Automated Kaggle Submission for Iteration {len(history)+1}")
                         kaggle_submit.format_submission(config_path, workspace_mgr=workspace_mgr)
                         kaggle_submit.submit_to_kaggle(config_path, commit_id=commit_id, workspace_mgr=workspace_mgr)

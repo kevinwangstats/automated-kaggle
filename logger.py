@@ -1,3 +1,12 @@
+"""
+logger.py
+
+Custom logging utility for the Agentic AutoML pipeline.
+Provides standardized console output for pipeline stages and metrics.
+Usage:
+    >>> from logger import log_stage, log_metric
+    >>> log_stage("Initialization")
+"""
 import logging
 import warnings
 import sys
