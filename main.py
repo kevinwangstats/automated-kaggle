@@ -247,17 +247,17 @@ def main():
                             f.write(f"\n- **Iter {len(history)}**: Score {base_score:.4f} (Commit: {git_mgr.get_current_commit()}) [MANUAL]\n")
                     except Exception:
                         pass
-                    
-                    # Auto-submit manual improvements to Kaggle
-                    try:
-                        import kaggle_submit
-                        raw_sub_path = Path(workspace_mgr.get_file_path("raw_submission.csv")) if workspace_mgr else Path("raw_submission.csv")
-                        if raw_sub_path.exists():
-                            log_stage(f"Automated Kaggle Submission for Manual Intervention (Iter {len(history)})")
-                            kaggle_submit.format_submission(args.config, workspace_mgr=workspace_mgr)
-                            kaggle_submit.submit_to_kaggle(args.config, commit_id=git_mgr.get_current_commit(), workspace_mgr=workspace_mgr)
-                    except Exception as e:
-                        log_error(f"Failed to submit manual intervention to Kaggle", e)
+            
+            # 4. Auto-submit resumed state to Kaggle
+            try:
+                import kaggle_submit
+                raw_sub_path = Path(workspace_mgr.get_file_path("raw_submission.csv")) if workspace_mgr else Path("raw_submission.csv")
+                if raw_sub_path.exists():
+                    log_stage(f"Automated Kaggle Submission for Resumed State")
+                    kaggle_submit.format_submission(args.config, workspace_mgr=workspace_mgr)
+                    kaggle_submit.submit_to_kaggle(args.config, commit_id=git_mgr.get_current_commit(), workspace_mgr=workspace_mgr)
+            except Exception as e:
+                log_error(f"Failed to submit resumed state to Kaggle", e)
         else:
             # Phase 1: EDA
             eda_path = perform_eda(dataset_path, target_col, max_rows=max_rows, workspace_mgr=workspace_mgr)

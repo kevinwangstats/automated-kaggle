@@ -20,6 +20,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.metrics import make_scorer, roc_auc_score, mean_squared_error
 from catboost import CatBoostRegressor, CatBoostClassifier
 from tqdm import tqdm
+from pathlib import Path
 
 def load_config(config_path="config.yaml"):
     with open(config_path, "r") as f:
