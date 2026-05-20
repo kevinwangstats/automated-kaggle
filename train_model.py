@@ -34,49 +34,63 @@ def load_config(config_path="config.yaml"):
 def engineer_features(df):
     df = df.copy()
     
-    # 1. Fill missing Embarked and Fare
+    # 1. Basic Imputation
     if 'Embarked' in df.columns:
         df['Embarked'] = df['Embarked'].fillna(df['Embarked'].mode()[0])
     if 'Fare' in df.columns:
         df['Fare'] = df['Fare'].fillna(df['Fare'].median())
 
-    # 2. Extract Title from Name
+    # 2. Extract Title and Name Length
     if 'Name' in df.columns:
+        df['NameLength'] = df['Name'].apply(len)
         df['Title'] = df['Name'].astype(str).str.extract(r' ([A-Za-z]+)\.', expand=False)
         title_mapping = {
             "Mr": "Mr", "Miss": "Miss", "Mrs": "Mrs", "Master": "Master",
-            "Mlle": "Miss", "Ms": "Miss", "Mme": "Mrs"
+            "Mlle": "Miss", "Ms": "Miss", "Mme": "Mrs",
+            "Don": "Rare", "Rev": "Rare", "Dr": "Rare", "Majeur": "Rare",
+            "Lady": "Rare", "Sir": "Rare", "Col": "Rare", "Capt": "Rare",
+            "Countess": "Rare", "Jonkheer": "Rare", "Dona": "Rare"
         } 
-        # Map rare titles to 'Rare'
         df['Title'] = df['Title'].map(lambda x: title_mapping.get(x, 'Rare'))
         df = df.drop(columns=['Name'])
 
-    # 3. Impute Age using Title Medians
-    if 'Age' in df.columns and 'Title' in df.columns:
-        df['Age'] = df.groupby('Title')['Age'].transform(lambda x: x.fillna(x.median()))
-        df['Age'] = df['Age'].fillna(df['Age'].median())
-
-    # 4. Ticket Group Size (Crucial Kaggle Trick)
+    # 3. Ticket Group Size and True Fare Per Person
     if 'Ticket' in df.columns:
         df['TicketGroupSize'] = df.groupby('Ticket')['Ticket'].transform('count')
+        df['FarePerPerson'] = df['Fare'] / df['TicketGroupSize']
         df = df.drop(columns=['Ticket'])
+    else:
+        df['TicketGroupSize'] = 1
+        df['FarePerPerson'] = df['Fare']
 
-    # 5. Family Size Binning (Trees prefer discrete bins here)
+    # 4. Granular Age Imputation
+    if 'Age' in df.columns and 'Title' in df.columns and 'Pclass' in df.columns and 'Sex' in df.columns:
+        # Impute based on Class, Sex, and Title for maximum accuracy
+        df['Age'] = df.groupby(['Pclass', 'Sex', 'Title'])['Age'].transform(lambda x: x.fillna(x.median()))
+        # Fallback for any remaining NaNs
+        df['Age'] = df['Age'].fillna(df.groupby('Title')['Age'].transform('median'))
+        df['Age'] = df['Age'].fillna(df['Age'].median())
+        
+        # Women and Children Protocol Flag
+        df['IsWomenOrBoy'] = ((df['Sex'] == 'female') | (df['Title'] == 'Master') | (df['Age'] <= 12)).astype(int)
+
+    # 5. Consolidated Group Size
     if all(c in df.columns for c in ['SibSp', 'Parch']):
         df['FamilySize'] = df['SibSp'] + df['Parch'] + 1
-        # Binning: 1 (Alone), 2-4 (Small), 5+ (Large)
-        df['FamilyCategory'] = pd.cut(df['FamilySize'], bins=[0, 1, 4, 20], labels=['Alone', 'Small', 'Large'])
+        # Use the maximum of family size or ticket group size to find true travel party size
+        df['GroupSize'] = df[['FamilySize', 'TicketGroupSize']].max(axis=1)
+        df['GroupCategory'] = pd.cut(df['GroupSize'], bins=[0, 1, 4, 20], labels=['Alone', 'Small', 'Large'])
 
-    # 6. Cabin Deck (Simplified)
+    # 6. Cabin Deck Extraction
     if 'Cabin' in df.columns:
+        df['HasCabin'] = df['Cabin'].notna().astype(int)
         df['Deck'] = df['Cabin'].apply(lambda x: str(x)[0] if pd.notna(x) else 'U')
-        # Group rare decks together
         df['Deck'] = df['Deck'].replace(['T', 'A', 'G', 'F'], 'Rare')
         df = df.drop(columns=['Cabin'])
 
-    # 7. Fare Binning
-    if 'Fare' in df.columns:
-        df['FareBin'] = pd.qcut(df['Fare'], 4, labels=['Low', 'Med', 'High', 'VeryHigh']).astype(str)
+    # 7. Fare Bins (Using the normalized Fare Per Person)
+    if 'FarePerPerson' in df.columns:
+        df['FareBin'] = pd.qcut(df['FarePerPerson'], 4, labels=['Low', 'Med', 'High', 'VeryHigh'], duplicates='drop').astype(str)
 
     return df
 
@@ -133,41 +147,41 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         remainder='passthrough' 
     )
 
-    # Initialize leaner base estimators
+    # Initialize learner base estimators (Slightly boosted n_estimators for better learning)
     if task == 'classification':
         estimators = [
-            ('xgb', XGBClassifier(n_estimators=200, random_state=42, n_jobs=-1, use_label_encoder=False, eval_metric='logloss')),
-            ('lgb', LGBMClassifier(n_estimators=200, random_state=42, verbose=-1, n_jobs=-1)),
-            ('cat', CatBoostClassifier(iterations=200, random_seed=42, verbose=0, thread_count=-1)),
-            ('hist', HistGradientBoostingClassifier(max_iter=200, random_state=42))
+            ('xgb', XGBClassifier(n_estimators=300, random_state=42, n_jobs=-1, use_label_encoder=False, eval_metric='logloss')),
+            ('lgb', LGBMClassifier(n_estimators=300, random_state=42, verbose=-1, n_jobs=-1)),
+            ('cat', CatBoostClassifier(iterations=300, random_seed=42, verbose=0, thread_count=-1)),
+            ('hist', HistGradientBoostingClassifier(max_iter=300, random_state=42))
         ]
         ensemble = VotingClassifier(estimators=estimators, voting='soft')
     else:
         estimators = [
-            ('xgb', XGBRegressor(n_estimators=200, random_state=42, n_jobs=-1)),
-            ('lgb', LGBMRegressor(n_estimators=200, random_state=42, verbose=-1, n_jobs=-1)),
-            ('cat', CatBoostRegressor(iterations=200, random_seed=42, verbose=0, thread_count=-1)),
-            ('hist', HistGradientBoostingRegressor(max_iter=200, random_state=42))
+            ('xgb', XGBRegressor(n_estimators=300, random_state=42, n_jobs=-1)),
+            ('lgb', LGBMRegressor(n_estimators=300, random_state=42, verbose=-1, n_jobs=-1)),
+            ('cat', CatBoostRegressor(iterations=300, random_seed=42, verbose=0, thread_count=-1)),
+            ('hist', HistGradientBoostingRegressor(max_iter=300, random_state=42))
         ]
         ensemble = VotingRegressor(estimators=estimators)
 
     pipeline = Pipeline(steps=[('preprocessor', preprocessor), ('model', ensemble)])
 
-    # Constrained Hyperparameter Search Space
+    # Refined Hyperparameter Search Space
     param_grid = {
-        'model__xgb__max_depth': [3, 5, 7],
-        'model__xgb__learning_rate': [0.01, 0.05, 0.1],
-        'model__lgb__num_leaves': [15, 31, 63],
-        'model__lgb__learning_rate': [0.01, 0.05, 0.1],
-        'model__cat__depth': [4, 6],
-        'model__cat__learning_rate': [0.01, 0.05, 0.1]
+        'model__xgb__max_depth': [3, 4, 5],
+        'model__xgb__learning_rate': [0.03, 0.05, 0.1],
+        'model__lgb__num_leaves': [15, 31, 45],
+        'model__lgb__learning_rate': [0.03, 0.05, 0.1],
+        'model__cat__depth': [4, 5, 6],
+        'model__cat__learning_rate': [0.03, 0.05, 0.1]
     }
 
-    # Wrap the pipeline in a RandomizedSearchCV (Fast tuning: 5 iterations, 3 folds)
+    # Wrap the pipeline in a RandomizedSearchCV (n_iter=10 for slightly deeper search)
     search = RandomizedSearchCV(
         pipeline, 
         param_distributions=param_grid, 
-        n_iter=5, 
+        n_iter=10, 
         cv=3, 
         scoring=search_scoring, 
         n_jobs=-1, 
