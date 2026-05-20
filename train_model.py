@@ -86,7 +86,6 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
         y_train, y_val = y[train_idx], y[val_idx]
         
-        from sklearn.base import clone
         fold_pipeline = clone(pipeline)
         fold_pipeline.fit(X_train, y_train)
         

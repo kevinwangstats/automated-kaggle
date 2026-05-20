@@ -7,15 +7,20 @@ Can be executed as an independent module to test baseline generation:
 """
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import KFold, cross_val_score
+import yaml
+import h2o
+import wandb
+from sklearn.model_selection import KFold, cross_val_score, cross_val_predict
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 from sklearn.compose import ColumnTransformer
+from sklearn.base import clone
+from sklearn.metrics import roc_auc_score, get_scorer, accuracy_score, f1_score, confusion_matrix
 from logger import log_stage, log_metric, log_error, suppress_stdout_stderr
+from h2o.sklearn import H2OAutoMLClassifier, H2OAutoMLRegressor
 import os
 import re
 
 def create_template_script(dataset_path: str, target_col: str, best_model_name: str, test_path: str = None, custom_metric: str = None, max_rows: int = None) -> str:
-    import yaml
     try:
         with open("models_registry.yaml", "r") as f:
             registry = yaml.safe_load(f)
@@ -229,10 +234,7 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
         metric_reports = {}
         models_to_eval = {}
         
-        from sklearn.pipeline import Pipeline
-        from tqdm import tqdm
 
-        import yaml
         with suppress_stdout_stderr():
             # Initialize models from registry
             try:
@@ -271,9 +273,6 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
                     results[m_name] = np.mean(scores)
                     
                     if task == 'classification':
-                        from sklearn.model_selection import cross_val_predict
-                        from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
-                        
                         preds = cross_val_predict(pipeline, X, y, cv=cv, n_jobs=n_jobs)
                         acc = accuracy_score(y, preds)
                         
