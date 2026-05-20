@@ -16,6 +16,7 @@ from pathlib import Path
 from sklearn.model_selection import KFold, cross_val_score
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 from sklearn.compose import ColumnTransformer
+from sklearn.base import clone
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import make_scorer, roc_auc_score, mean_squared_error
 from catboost import CatBoostRegressor, CatBoostClassifier

@@ -10,6 +10,7 @@ import numpy as np
 import yaml
 import h2o
 import wandb
+from tqdm import tqdm
 from sklearn.model_selection import KFold, cross_val_score, cross_val_predict
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 from sklearn.compose import ColumnTransformer
