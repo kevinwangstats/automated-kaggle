@@ -52,7 +52,6 @@ def perform_eda(dataset_path: str, target_col: str, output_path: str = "EDA.md",
         # Ensure target is in corr_df for correlation computation
         if target_col not in corr_df.columns:
             if df[target_col].dtype == object or df[target_col].dtype.name == 'category' or df[target_col].dtype == bool:
-                from sklearn.preprocessing import LabelEncoder
                 mode_vals = df[target_col].mode()
                 fill_val = mode_vals[0] if not mode_vals.empty else "Missing"
                 corr_df[target_col] = LabelEncoder().fit_transform(df[target_col].fillna(fill_val).astype(str))

@@ -160,9 +160,7 @@ def main():
             df = pd.read_csv(dataset_path, nrows=max_rows)
             y = df[target_col].dropna()
             task = 'classification' if y.nunique() < 20 else 'regression'
-            
-            import json
-            import re
+
             history_path = Path("history.json")
             script_path = Path("train_model.py")
             
@@ -294,7 +292,7 @@ def main():
             auto_submit_val = str(config.get("auto_kaggle_submit", "never")).lower()
             if auto_submit_val in ["always", "true", "best"]:
                 try:
-                    import kaggle_submit
+
                     raw_sub_path = Path(workspace_mgr.get_file_path("raw_submission.csv")) if workspace_mgr else Path("raw_submission.csv")
                     if raw_sub_path.exists():
                         log_stage(f"Automated Kaggle Submission for Baseline")
@@ -347,7 +345,7 @@ def main():
                 log_error("Failed to generate baseline submission", e)
 
         # Phase 4: Format Final Submission
-        import kaggle_submit
+
         log_stage("Formatting Final Submission")
         kaggle_submit.format_submission(args.config, workspace_mgr=workspace_mgr)
 
@@ -357,7 +355,6 @@ def main():
     except Exception as e:
         log_error("Pipeline failed with a critical error", e)
         if 'wandb_enabled' in locals() and wandb_enabled:
-            import wandb
             wandb.finish()
 
 if __name__ == "__main__":
