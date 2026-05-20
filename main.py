@@ -12,6 +12,7 @@ from baseline_engine import evaluate_baselines
 from agent_loop import run_agent_loop, run_training_script
 from git_manager import GitManager, dataset_branch_from_dataset_path
 from logger import log_stage, log_error
+from pathlib import Path
 
 def main():
     parser = argparse.ArgumentParser(description="Agentic AutoML Pipeline")
