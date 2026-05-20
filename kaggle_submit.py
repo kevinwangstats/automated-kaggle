@@ -170,9 +170,3 @@ if __name__ == "__main__":
         # Default behavior: do both
         format_submission(args.config)
         submit_to_kaggle(args.config)
-bmit_to_kaggle(args.config)
-ion(args.config)
-    else:
-        # Default behavior: do both
-        format_submission(args.config)
-        submit_to_kaggle(args.config)
