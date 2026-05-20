@@ -82,11 +82,13 @@ pred_prob: true
 # Examples: "data/sample_submission.csv", "data/titanic/gender_submission.csv", ~
 example_submission: ~
 
-# auto_kaggle_submit: If true, the pipeline will automatically attempt to submit
-# "submission.csv" to Kaggle during each improved iteration using the Kaggle CLI.
+# auto_kaggle_submit: Controls automated Kaggle submissions.
+# "always": Submits every successful execution (Baseline, Agent Iteration) with a valid prediction.
+# "best": Submits only if the local CV score strictly beats the historical best.
+# "never": Disables automated submissions.
 # Requires: `pip install kaggle` and a valid `~/.kaggle/kaggle.json`.
-# Examples: true, false
-auto_kaggle_submit: false
+# Examples: "always", "best", "never"
+auto_kaggle_submit: "never"
 
 # --- LOGGING & ADVANCED OPTIONS ---
 

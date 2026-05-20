@@ -249,15 +249,23 @@ def main():
                         pass
             
             # 4. Auto-submit resumed state to Kaggle
-            try:
-                import kaggle_submit
-                raw_sub_path = Path(workspace_mgr.get_file_path("raw_submission.csv")) if workspace_mgr else Path("raw_submission.csv")
-                if raw_sub_path.exists():
-                    log_stage(f"Automated Kaggle Submission for Resumed State")
-                    kaggle_submit.format_submission(args.config, workspace_mgr=workspace_mgr)
-                    kaggle_submit.submit_to_kaggle(args.config, commit_id=git_mgr.get_current_commit(), workspace_mgr=workspace_mgr)
-            except Exception as e:
-                log_error(f"Failed to submit resumed state to Kaggle", e)
+            auto_submit_val = str(config.get("auto_kaggle_submit", "never")).lower()
+            should_submit = False
+            if auto_submit_val in ["always", "true"]:
+                should_submit = True
+            elif auto_submit_val == "best" and is_modified and improved:
+                should_submit = True
+                
+            if should_submit:
+                try:
+                    import kaggle_submit
+                    raw_sub_path = Path(workspace_mgr.get_file_path("raw_submission.csv")) if workspace_mgr else Path("raw_submission.csv")
+                    if raw_sub_path.exists():
+                        log_stage(f"Automated Kaggle Submission for Resumed State")
+                        kaggle_submit.format_submission(args.config, workspace_mgr=workspace_mgr)
+                        kaggle_submit.submit_to_kaggle(args.config, commit_id=git_mgr.get_current_commit(), workspace_mgr=workspace_mgr)
+                except Exception as e:
+                    log_error(f"Failed to submit resumed state to Kaggle", e)
         else:
             # Phase 1: EDA
             eda_path = perform_eda(dataset_path, target_col, max_rows=max_rows, workspace_mgr=workspace_mgr)
@@ -279,6 +287,19 @@ def main():
             git_mgr.commit_all(f"Initial Baseline Commit | CV Score: {base_score:.4f}")
             if not had_commits:
                 git_mgr.ensure_dataset_branch_after_initial_commit(dataset_branch)
+
+            # Auto-submit baseline to Kaggle
+            auto_submit_val = str(config.get("auto_kaggle_submit", "never")).lower()
+            if auto_submit_val in ["always", "true", "best"]:
+                try:
+                    import kaggle_submit
+                    raw_sub_path = Path(workspace_mgr.get_file_path("raw_submission.csv")) if workspace_mgr else Path("raw_submission.csv")
+                    if raw_sub_path.exists():
+                        log_stage(f"Automated Kaggle Submission for Baseline")
+                        kaggle_submit.format_submission(args.config, workspace_mgr=workspace_mgr)
+                        kaggle_submit.submit_to_kaggle(args.config, commit_id=git_mgr.get_current_commit(), workspace_mgr=workspace_mgr)
+                except Exception as e:
+                    log_error(f"Failed to submit baseline to Kaggle", e)
 
         # Phase 3: Agentic Loop
         available_models = []
@@ -323,14 +344,6 @@ def main():
             except Exception as e:
                 log_error("Failed to generate baseline submission", e)
 
-        # Phase 4: Automated Kaggle Submission
-        import kaggle_submit
-        log_stage("Final Kaggle Submission")
-        kaggle_submit.format_submission(args.config, workspace_mgr=workspace_mgr)
-        
-        current_commit_id = git_mgr.get_current_commit()
-        kaggle_submit.submit_to_kaggle(args.config, commit_id=current_commit_id, workspace_mgr=workspace_mgr)
-        
         if wandb_enabled:
             wandb.finish()
             

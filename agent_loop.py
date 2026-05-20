@@ -277,17 +277,6 @@ Output ONLY the full modified Python code wrapped in python ...  blocks. Do not 
                 with open("CHANGELOG.md", "a") as f:
                     f.write(f"\n- **Iter {len(history)+1}**: Score {new_score:.4f} (Commit: {commit_id})\n")
                     
-                # Submit to Kaggle if auto_submit is on
-                try:
-                    import kaggle_submit
-                    raw_sub_path = Path(workspace_mgr.get_file_path("raw_submission.csv")) if workspace_mgr else Path("raw_submission.csv")
-                    if raw_sub_path.exists():
-                        log_stage(f"Automated Kaggle Submission for Iteration {len(history)+1}")
-                        kaggle_submit.format_submission(config_path, workspace_mgr=workspace_mgr)
-                        kaggle_submit.submit_to_kaggle(config_path, commit_id=commit_id, workspace_mgr=workspace_mgr)
-                except Exception as e:
-                    log_error(f"Failed to submit iteration {len(history)+1} to Kaggle", e)
-                    
                 # Update history
                 history.append({
                     "iteration": len(history)+1,
@@ -307,6 +296,30 @@ Output ONLY the full modified Python code wrapped in python ...  blocks. Do not 
                     "prompt": prompt,
                     "response": llm_output
                 })
+                
+            # Kaggle Submission Logic
+            try:
+                with open(config_path, "r") as f:
+                    config = yaml.safe_load(f)
+                auto_submit_val = str(config.get("auto_kaggle_submit", "never")).lower()
+                
+                # We submit if 'always' (or true), OR if 'best' and it improved
+                should_submit = False
+                if auto_submit_val in ["always", "true"]:
+                    should_submit = True
+                elif auto_submit_val == "best" and improved:
+                    should_submit = True
+                    
+                if should_submit:
+                    import kaggle_submit
+                    raw_sub_path = Path(workspace_mgr.get_file_path("raw_submission.csv")) if workspace_mgr else Path("raw_submission.csv")
+                    if raw_sub_path.exists():
+                        log_stage(f"Automated Kaggle Submission for Iteration {len(history)}")
+                        kaggle_submit.format_submission(config_path, workspace_mgr=workspace_mgr)
+                        commit_to_submit = history[-1].get("commit")
+                        kaggle_submit.submit_to_kaggle(config_path, commit_id=commit_to_submit, workspace_mgr=workspace_mgr)
+            except Exception as e:
+                log_error(f"Failed to submit iteration {len(history)} to Kaggle", e)
                 
         except Exception as e:
             log_error(f"Execution failed for iteration {i}", e)
