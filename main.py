@@ -7,10 +7,18 @@ Execute this script as the primary entry point:
 """
 import argparse
 import yaml
+import sys
+import os
+import pandas as pd
+import json
+import re
+import wandb
+import kaggle_submit
 from eda_engine import perform_eda
 from baseline_engine import evaluate_baselines
 from agent_loop import run_agent_loop, run_training_script
 from git_manager import GitManager, dataset_branch_from_dataset_path
+from workspace_manager import WorkspaceManager
 from logger import log_stage, log_error
 from pathlib import Path
 
@@ -44,16 +52,12 @@ def main():
         if not dataset_path or not target_col:
             raise ValueError("Configuration file must contain 'dataset_path' and 'target_col'")
 
-        import sys
-        import os
-        import pandas as pd
         git_mgr = GitManager()
         dataset_branch = dataset_branch_from_dataset_path(dataset_path)
         
         workspace_root = config.get("workspace_root", ".workspaces")
         run_mode = config.get("run_mode", "prompt")
         
-        from workspace_manager import WorkspaceManager
         workspace_mgr = WorkspaceManager(dataset_branch, root_dir=workspace_root)
         had_commits = bool(git_mgr.repo.heads)
         
@@ -119,7 +123,6 @@ def main():
         wandb_project = dataset_branch
 
         if wandb_enabled:
-            import wandb
             run_id_file = Path(workspace_mgr.get_file_path("wandb_run_id.txt")) if workspace_mgr else Path("wandb_run_id.txt")
             
             init_kwargs = {
@@ -258,7 +261,6 @@ def main():
                 
             if should_submit:
                 try:
-                    import kaggle_submit
                     raw_sub_path = Path(workspace_mgr.get_file_path("raw_submission.csv")) if workspace_mgr else Path("raw_submission.csv")
                     if raw_sub_path.exists():
                         log_stage(f"Automated Kaggle Submission for Resumed State")
@@ -343,6 +345,11 @@ def main():
                 run_training_script(script_path=script_path, timeout=timeout, config_path=args.config, workspace_mgr=workspace_mgr)
             except Exception as e:
                 log_error("Failed to generate baseline submission", e)
+
+        # Phase 4: Format Final Submission
+        import kaggle_submit
+        log_stage("Formatting Final Submission")
+        kaggle_submit.format_submission(args.config, workspace_mgr=workspace_mgr)
 
         if wandb_enabled:
             wandb.finish()

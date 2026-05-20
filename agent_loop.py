@@ -12,6 +12,10 @@ import json
 import re
 import subprocess
 import yaml
+import urllib.request
+import urllib.error
+import wandb
+import kaggle_submit
 from pathlib import Path
 from litellm import completion
 from logger import log_stage, log_error, log_metric
@@ -213,8 +217,6 @@ Output ONLY the full modified Python code wrapped in python ...  blocks. Do not 
                 completion_kwargs["api_base"] = base
                 
                 print(f"  [Info] Local Ollama model detected. Checking connection to {base} ...")
-                import urllib.request
-                import urllib.error
                 try:
                     urllib.request.urlopen(base, timeout=3)
                 except urllib.error.URLError:

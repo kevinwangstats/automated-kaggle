@@ -11,6 +11,7 @@ import json
 from logger import log_stage, log_error
 import os
 import numpy as np
+from sklearn.preprocessing import LabelEncoder
 
 def perform_eda(dataset_path: str, target_col: str, output_path: str = "EDA.md", max_rows: int = None, workspace_mgr=None):
     log_stage("Enhanced Automated EDA")
