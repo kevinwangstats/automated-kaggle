@@ -76,13 +76,15 @@ timeout: 300
 
 # --- KAGGLE SUBMISSION OPTIONS ---
 
-# pred_prob: Boolean indicating if the final Kaggle submission should be probabilities (true) 
-# or discrete class labels (false). Default: true.
+# pred_type: Determines the format of the target column in the final Kaggle submission.
 # raw_submission.csv ALWAYS contains probabilities for classification;
-# this flag determines if kaggle_ops.py converts them to classes.
-# Examples: true, false
+# this setting controls how kaggle_ops.py converts them for the final submission.csv.
+# "prob": Submit raw probabilities (e.g., 0.73). Use for competitions scored on log_loss or AUC.
+# "0/1": Convert probabilities to discrete 0 or 1 classes using a 0.5 threshold.
+# "true/false": Convert probabilities to True or False boolean labels using a 0.5 threshold.
+# Examples: "prob", "0/1", "true/false"
 # Titanic requires discrete class predictions (0 or 1), not probabilities
-pred_prob: false
+pred_type: "0/1"
 
 # example_submission: Path to a Kaggle-provided sample submission file.
 # The pipeline uses this to automatically detect if the competition requires 

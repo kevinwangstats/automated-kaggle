@@ -92,7 +92,7 @@ def run_agent_loop(
     wandb_enabled: bool = False,
     wandb_project: str = None,
     wandb_entity: str = None,
-    pred_prob: bool = True,
+    pred_type: str = "prob",
     config_path: str = "config.yaml",
     available_models: list = None,
     workspace_mgr=None
@@ -151,7 +151,7 @@ def run_agent_loop(
                 # so the current_script is the new baseline.
                 history_context = f"\nPREVIOUS RUN IMPROVED SCORE TO {last_run.get('score')}. Good job, keep going!\n"
 
-        pred_prob_instruction = "Ensure that for the final `raw_submission.csv`, you predict the continuous PROBABILITIES for the positive class (e.g., using `predict_proba(test_X)[:, 1]`). Another script will handle formatting it for Kaggle into `submission.csv`."
+        pred_prob_instruction = "Ensure that for the final `raw_submission.csv`, you ALWAYS predict the continuous PROBABILITIES for the positive class (e.g., using `predict_proba(test_X)[:, 1]`). Do NOT apply any thresholding or class conversion. Another script will handle formatting it for Kaggle into `submission.csv`."
 
         models_str = ", ".join(available_models) if available_models else "None specifically defined in registry"
         prompt = f"""You are an expert AI Data Scientist. Your goal is to improve the Cross-Validation score of the model.
