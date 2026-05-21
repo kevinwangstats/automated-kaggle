@@ -108,8 +108,7 @@ class GitManager:
         if dataset_branch in head_names:
             self.repo.git.checkout(dataset_branch)
         else:
-            self.repo.git.checkout("main")
-            self.repo.git.checkout("-b", dataset_branch)
+            self.repo.git.checkout("-b", dataset_branch, "main")
             
         log_stage(f"Dataset work branch: {dataset_branch}")
 
