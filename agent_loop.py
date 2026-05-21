@@ -15,7 +15,7 @@ import yaml
 import urllib.request
 import urllib.error
 import wandb
-import kaggle_submit
+import kaggle_ops
 from pathlib import Path
 from litellm import completion
 from logger import log_stage, log_error, log_metric
@@ -316,9 +316,9 @@ Output ONLY the full modified Python code wrapped in python ...  blocks. Do not 
                     raw_sub_path = Path(workspace_mgr.get_file_path("raw_submission.csv")) if workspace_mgr else Path("raw_submission.csv")
                     if raw_sub_path.exists():
                         log_stage(f"Automated Kaggle Submission for Iteration {len(history)}")
-                        kaggle_submit.format_submission(config_path, workspace_mgr=workspace_mgr)
+                        kaggle_ops.format_submission(config_path, workspace_mgr=workspace_mgr)
                         commit_to_submit = history[-1].get("commit")
-                        kaggle_submit.submit_to_kaggle(config_path, commit_id=commit_to_submit, workspace_mgr=workspace_mgr)
+                        kaggle_ops.submit_to_kaggle(config_path, commit_id=commit_to_submit, workspace_mgr=workspace_mgr)
             except Exception as e:
                 log_error(f"Failed to submit iteration {len(history)} to Kaggle", e)
                 

@@ -3,7 +3,7 @@
 ## Workspace Paradigm
 The pipeline separates **Version-Tracked Assets** (`train_model.py`, `history.json`, `EDA.md`) from **Ephemeral Execution Artifacts** (`metrics.json`, `raw_submission.csv`). Tracked assets MUST remain in the root directory to maintain Git code provenance. The execution sandbox is isolated via the `--output_dir` CLI argument. The LLM must ALWAYS accept `--output_dir` (defaulting to `.`) and use it to save metrics and predictions. Do NOT use `os.path.dirname(__file__)`.
 
-Dataset initialization (branching, worktree creation, and Kaggle data downloading) is fully automated via `python kaggle_submit.py --setup <dataset_name>`.
+Dataset initialization (branching, worktree creation, and Kaggle data downloading) is fully automated via `python kaggle_ops.py --setup <dataset_name>`.
 
 You are working in a Python-based template repository designed for autonomous, agentic modeling on Kaggle Tabular data challenges. This project uses `litellm` combined with pure Python orchestration and Git-based strict code provenance.
 
