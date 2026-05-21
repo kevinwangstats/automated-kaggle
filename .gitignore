@@ -228,3 +228,4 @@ wandb/*
 catboost_info/*
 settings.json
 wandb_run_id.txt
+raw_submission.csv

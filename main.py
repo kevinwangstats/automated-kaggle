@@ -13,6 +13,7 @@ import pandas as pd
 import json
 import re
 import wandb
+import time
 import kaggle_ops
 from eda_engine import perform_eda
 from baseline_engine import evaluate_baselines
@@ -37,7 +38,7 @@ def main():
         target_col = config.get('target_col')
         test_path = config.get('test_path')
         metric = config.get('metric')
-        pred_prob = config.get('pred_prob', True)
+        pred_type = config.get('pred_type', 'prob')
         iterations = config.get('iterations', 5)
         timeout = config.get('timeout', 600)
         model = config.get('model', None)
@@ -192,6 +193,7 @@ def main():
             
             # 2. Always execute train_model.py as-is first
             print("[Info] Executing existing train_model.py to establish current baseline score...")
+            t_start = time.time()
             try:
                 base_score = run_training_script(
                     script_path=script_path,
@@ -199,10 +201,11 @@ def main():
                     config_path=args.config,
                     workspace_mgr=workspace_mgr
                 )
-                print(f"[Info] Established current score: {base_score:.4f}")
+                print(f"[Info] Established current score: {base_score:.4f} (took {time.time() - t_start:.2f}s)")
             except Exception as e:
                 log_error("Failed to execute existing train_model.py", e)
                 print("[Info] Falling back to regenerating a fresh baseline...")
+                t_fallback = time.time()
                 eda_path = perform_eda(dataset_path, target_col, max_rows=max_rows, workspace_mgr=workspace_mgr)
                 base_score, script_path, task = evaluate_baselines(
                     dataset_path=dataset_path,
@@ -215,8 +218,8 @@ def main():
                     max_rows=max_rows,
                     workspace_mgr=workspace_mgr
                 )
+                print(f"[Info] Regenerated baseline in {time.time() - t_fallback:.2f}s. Score: {base_score:.4f}")
                 git_mgr.commit_all(f"Baseline Regenerated (broken resume) | CV Score: {base_score:.4f}")
-                print(f"[Info] Regenerated baseline score: {base_score:.4f}")
                 # Skip human intervention logging since we regenerated
                 is_modified = False
 
@@ -262,15 +265,20 @@ def main():
                     raw_sub_path = Path(workspace_mgr.get_file_path("raw_submission.csv")) if workspace_mgr else Path("raw_submission.csv")
                     if raw_sub_path.exists():
                         log_stage(f"Automated Kaggle Submission for Resumed State")
+                        t_submit = time.time()
                         kaggle_ops.format_submission(args.config, workspace_mgr=workspace_mgr)
                         kaggle_ops.submit_to_kaggle(args.config, commit_id=git_mgr.get_current_commit(), workspace_mgr=workspace_mgr)
+                        print(f"[Info] Resumed state submission completed in {time.time() - t_submit:.2f}s")
                 except Exception as e:
                     log_error(f"Failed to submit resumed state to Kaggle", e)
         else:
             # Phase 1: EDA
+            t_eda = time.time()
             eda_path = perform_eda(dataset_path, target_col, max_rows=max_rows, workspace_mgr=workspace_mgr)
+            print(f"[Info] Phase 1 (EDA) completed in {time.time() - t_eda:.2f}s")
 
             # Phase 2: Baseline
+            t_baseline = time.time()
             base_score, script_path, task = evaluate_baselines(
                 dataset_path=dataset_path, 
                 target_col=target_col,
@@ -282,6 +290,7 @@ def main():
                 max_rows=max_rows,
                 workspace_mgr=workspace_mgr
             )
+            print(f"[Info] Phase 2 (Baseline) completed in {time.time() - t_baseline:.2f}s. Score: {base_score:.4f}")
             
             # Initial commit to secure baseline state
             git_mgr.commit_all(f"Initial Baseline Commit | CV Score: {base_score:.4f}")
@@ -296,8 +305,10 @@ def main():
                     raw_sub_path = Path(workspace_mgr.get_file_path("raw_submission.csv")) if workspace_mgr else Path("raw_submission.csv")
                     if raw_sub_path.exists():
                         log_stage(f"Automated Kaggle Submission for Baseline")
+                        t_submit = time.time()
                         kaggle_ops.format_submission(args.config, workspace_mgr=workspace_mgr)
                         kaggle_ops.submit_to_kaggle(args.config, commit_id=git_mgr.get_current_commit(), workspace_mgr=workspace_mgr)
+                        print(f"[Info] Baseline submission completed in {time.time() - t_submit:.2f}s")
                 except Exception as e:
                     log_error(f"Failed to submit baseline to Kaggle", e)
 
@@ -312,6 +323,7 @@ def main():
             except Exception:
                 pass
 
+        t_loop = time.time()
         run_agent_loop(
             dataset_path=dataset_path,
             target_col=target_col,
@@ -328,26 +340,31 @@ def main():
             wandb_enabled=wandb_enabled,
             wandb_project=wandb_project,
             wandb_entity=wandb_entity,
-            pred_prob=pred_prob,
+            pred_type=pred_type,
             config_path=args.config,
             available_models=available_models,
             workspace_mgr=workspace_mgr
         )
+        print(f"[Info] Phase 3 (Agentic Loop) completed in {time.time() - t_loop:.2f}s")
         
         # Ensure we have a raw_submission.csv if we have a test_path
         raw_sub_path = Path(workspace_mgr.get_file_path("raw_submission.csv")) if workspace_mgr else Path("raw_submission.csv")
         if test_path and not raw_sub_path.exists():
             log_stage("Generating Baseline Submission")
+            t_gen = time.time()
             try:
                 script_path = "train_model.py"
                 run_training_script(script_path=script_path, timeout=timeout, config_path=args.config, workspace_mgr=workspace_mgr)
+                print(f"[Info] Baseline submission generation completed in {time.time() - t_gen:.2f}s")
             except Exception as e:
                 log_error("Failed to generate baseline submission", e)
 
         # Phase 4: Format Final Submission
 
         log_stage("Formatting Final Submission")
+        t_format = time.time()
         kaggle_ops.format_submission(args.config, workspace_mgr=workspace_mgr)
+        print(f"[Info] Phase 4 (Format Submission) completed in {time.time() - t_format:.2f}s")
 
         if wandb_enabled:
             wandb.finish()
