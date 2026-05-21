@@ -117,14 +117,14 @@ def format_submission(config_path="config.yaml", workspace_mgr=None):
     raw_sub = pd.read_csv(raw_sub_path)
     
     example_sub_path = config.get("example_submission", None)
-    # The pred_prob setting from config is our source of truth.
+    # The pred_type setting from config is our source of truth.
     # raw_submission.csv is expected to always contain probabilities for classification.
-    pred_prob = config.get("pred_prob", True)
+    pred_type = config.get("pred_type", "prob")
 
     if example_sub_path and Path(example_sub_path).exists():
         print(f"[kaggle_ops] Reading example submission from {example_sub_path} for column names.")
     else:
-        print(f"[kaggle_ops] Using config pred_prob: {pred_prob}")
+        print(f"[kaggle_ops] Using config pred_type: {pred_type}")
 
     final_sub = raw_sub.copy()
     
@@ -150,11 +150,17 @@ def format_submission(config_path="config.yaml", workspace_mgr=None):
 
     if len(final_sub.columns) > 1:
         target_col = final_sub.columns[1]
-        if not pred_prob:
-            print("[kaggle_ops] Converting probabilities to discrete classes (threshold=0.5).")
-            # If probabilities are between 0 and 1, convert to 0/1
+        if pred_type == "0/1":
+            print("[kaggle_ops] Converting probabilities to discrete 0/1 classes (threshold=0.5).")
             if pd.api.types.is_float_dtype(final_sub[target_col]) and final_sub[target_col].between(0, 1).all():
                 final_sub[target_col] = (final_sub[target_col] >= 0.5).astype(int)
+        elif pred_type == "true/false":
+            print("[kaggle_ops] Converting probabilities to True/False labels (threshold=0.5).")
+            if pd.api.types.is_float_dtype(final_sub[target_col]) and final_sub[target_col].between(0, 1).all():
+                final_sub[target_col] = (final_sub[target_col] >= 0.5)
+        else:
+            # pred_type == "prob" — keep raw probabilities as-is
+            pass
 
     output_path = workspace_mgr.get_file_path("submission.csv") if workspace_mgr else get_submission_path(config)
     final_sub.to_csv(output_path, index=False)
