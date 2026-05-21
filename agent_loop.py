@@ -21,6 +21,38 @@ from litellm import completion
 from logger import log_stage, log_error, log_metric
 from git_manager import GitManager
 
+def get_kimi_file_messages(file_paths: list, api_key: str) -> list:
+    """Uploads files to Moonshot, extracts text, and formats them as system messages."""
+    from openai import OpenAI
+    from pathlib import Path
+    
+    kimi_client = OpenAI(
+        api_key=api_key,
+        base_url="https://api.moonshot.ai/v1"
+    )
+    
+    messages = []
+    for file_path in file_paths:
+        if not Path(file_path).exists():
+            continue
+            
+        # 1. Upload file with purpose 'file-extract'
+        file_object = kimi_client.files.create(
+            file=Path(file_path), 
+            purpose="file-extract"
+        )
+        
+        # 2. Extract content
+        file_content = kimi_client.files.content(file_id=file_object.id).text
+        
+        # 3. Append as independent system message
+        messages.append({
+            "role": "system",
+            "content": f"File Content for {file_path}:\n{file_content}"
+        })
+        
+    return messages
+
 def extract_python_code(text: str) -> str:
     # Try to extract from markdown python block
     match = re.search(r'```python\n(.*?)\n```', text, re.DOTALL)
@@ -137,19 +169,18 @@ def run_agent_loop(
         
         script_path = "train_model.py"
         current_script = read_file(script_path)
-        history_context = ""
-        if len(history) > 0:
-            last_run = history[-1]
-            if last_run.get('error'):
-                history_context = f"\nPREVIOUS RUN FAILED WITH ERROR:\n{last_run['error']}\nPlease fix this error in the current script.\n"
-            elif not last_run.get('improved'):
-                # If it ran but didn't improve, we might want to keep the new logic but tweak it, 
-                # or the prompt will just tell it to try another approach on the existing script.
-                history_context = f"\nPREVIOUS RUN DEGRADED SCORE ({last_run.get('score')} vs Best: {current_best_score}). Try a different approach.\n"
+        memory_string = "### Agent Memory (Past Experiments)\n"
+        recent_history = history[-3:] if len(history) >= 3 else history
+
+        for run in recent_history:
+            status = "IMPROVED" if run.get('improved') else ("FAILED WITH ERROR" if run.get('error') else "DEGRADED")
+            memory_string += f"- Iteration {run['iteration']} ({status}): "
+            
+            if run.get('error'):
+                # Truncate error to last 1000 chars
+                memory_string += f"{str(run['error'])[-1000:]}\n"
             else:
-                # If the previous run improved, the dataset branch was already merged and is clean,
-                # so the current_script is the new baseline.
-                history_context = f"\nPREVIOUS RUN IMPROVED SCORE TO {last_run.get('score')}. Good job, keep going!\n"
+                memory_string += f"Score {run.get('score')}. Reasoning: {run.get('agent_reasoning', 'No reasoning provided')}\n"
 
         pred_prob_instruction = "Ensure that for the final `raw_submission.csv`, you ALWAYS predict the continuous PROBABILITIES for the positive class (e.g., using `predict_proba(test_X)[:, 1]`). Do NOT apply any thresholding or class conversion. Another script will handle formatting it for Kaggle into `submission.csv`."
 
@@ -172,18 +203,11 @@ You have access to the following pre-configured models from the registry: {model
 
 You should try tuning hyperparameters for these models, comparing their individual performance, or ensembling them (e.g., using `VotingClassifier`/`VotingRegressor` or `StackingClassifier`/`StackingRegressor`) to maximize the cross-validation score.
 
-Dataset EDA Summary:
-{eda_content}
-
-Current Best Script:
-```python
-{current_script}
-Current Best Score: {current_best_score}
-{history_context}
+{memory_string}
 
 YOUR MISSION PRIORITIES:
 
-FIX ERRORS FIRST: If the history context above indicates the previous run failed with a traceback or error, your EXCLUSIVE priority is to debug and fix the script. Do NOT attempt to add new features, models, or optimizations until the error is resolved.
+FIX ERRORS FIRST: If the memory above indicates the previous run failed with a traceback or error, your EXCLUSIVE priority is to debug and fix the script. Do NOT attempt to add new features, models, or optimizations until the error is resolved.
 
 IMPROVE SCORE: If the previous run succeeded, your goal is to propose a modified version of the script to improve the model via feature engineering, missing value handling, hyperparameter tuning, or architecture changes.
 
@@ -205,9 +229,32 @@ Output ONLY the full modified Python code wrapped in python ...  blocks. Do not 
             model_name = model or os.environ.get("AUTOML_MODEL", "gemini/gemini-2.5-flash-lite")
             log_stage(f"Calling LLM: {model_name}")
             
+            user_message = {"role": "user", "content": prompt}
+            final_messages = []
+            
+            if "kimi" in model_name.lower() or "moonshot" in model_name.lower():
+                api_key = os.environ.get("MOONSHOT_API_KEY", "")
+                if not api_key:
+                    print("  [Warning] MOONSHOT_API_KEY not found in environment. Falling back to local file reading.")
+                    file_messages = []
+                    for fp in ["train_model.py", "EDA.md", config_path]:
+                        if Path(fp).exists():
+                            file_messages.append({"role": "system", "content": f"File Content for {fp}:\n{read_file(fp)}"})
+                else:
+                    print("  [Info] Uploading files to Moonshot Kimi API...")
+                    file_messages = get_kimi_file_messages(["train_model.py", "EDA.md", config_path], api_key)
+                final_messages = file_messages + [user_message]
+            else:
+                # Fallback to safely reading the files locally and appending them as system messages
+                file_messages = []
+                for fp in ["train_model.py", "EDA.md", config_path]:
+                    if Path(fp).exists():
+                        file_messages.append({"role": "system", "content": f"File Content for {fp}:\n{read_file(fp)}"})
+                final_messages = file_messages + [user_message]
+
             completion_kwargs = {
                 "model": model_name,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": final_messages,
                 "temperature": temperature,
                 "request_timeout": 120  # Ensure LLM call doesn't hang indefinitely
             }
