@@ -1,13 +1,9 @@
 """
 train_model.py
 
-Improved ensemble training script:
-- Dataset-agnostic (config.yaml driven).
-- Rich feature engineering (titles, deck, interactions, etc.).
-- ColumnTransformer with TargetEncoder (fallback OneHot) + StandardScaler.
-- Fixed, well‑performing hyperparameters for base models (avoiding costly grid search).
-- Soft voting ensemble without calibration.
-- Final cross‑validation score written to metrics.json; submission probabilities to raw_submission.csv.
+Improved script using a soft voting ensemble of top base models (XGBoost, LightGBM,
+CatBoost, HistGradientBoosting) to avoid overfitting caused by hyper‑parameter tuning
+of the previous stacking approach. Dataset‑agnostic, reads configuration from YAML.
 """
 
 import argparse
@@ -24,9 +20,9 @@ from lightgbm import LGBMClassifier
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import (
     HistGradientBoostingClassifier,
-    RandomForestClassifier,
     VotingClassifier,
 )
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import (
     StratifiedKFold,
@@ -225,11 +221,12 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     y_raw = df_train[target_col]
     X_raw = df_train.drop(columns=[target_col])
 
+    # sanitize column names
     X_raw.columns = [
         re.sub(r"[^\w\s]", "", col).replace(" ", "_") for col in X_raw.columns
     ]
 
-    # ID column detection
+    # ID column detection – remove from features if present
     id_col_name = None
     potential_ids = ["passengerid", "id", "index"]
     first_col = X_raw.columns[0]
@@ -242,6 +239,9 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
 
     # Feature engineering
     X = engineer_features(X_raw)
+    X.columns = [
+        re.sub(r"[^\w\s]", "", col).replace(" ", "_") for col in X.columns
+    ]
 
     # Target encoding
     le = LabelEncoder()
@@ -271,81 +271,85 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         remainder="passthrough",
     )
 
-    # ---- Base models with fixed, well‑tuned hyperparameters ----
-    # These avoid expensive grid search while still delivering strong performance.
-    xgb = XGBClassifier(
-        n_estimators=300,
-        max_depth=5,
-        learning_rate=0.03,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        reg_alpha=1.0,
-        reg_lambda=5.0,
-        random_state=42,
-        verbosity=0,
-        use_label_encoder=False,
-        eval_metric="logloss",
-    )
-    lgb = LGBMClassifier(
-        n_estimators=300,
-        num_leaves=31,
-        learning_rate=0.03,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        min_child_samples=20,
-        reg_alpha=0.1,
-        reg_lambda=0.1,
-        random_state=42,
-        verbose=-1,
-    )
-    cat = CatBoostClassifier(
-        iterations=300,
-        depth=6,
-        learning_rate=0.03,
-        l2_leaf_reg=3,
-        random_strength=1.0,
-        bagging_temperature=0.5,
-        random_state=42,
-        verbose=0,
-    )
-    hist = HistGradientBoostingClassifier(
-        max_iter=300,
-        max_depth=5,
-        learning_rate=0.03,
-        l2_regularization=1.5,
-        random_state=42,
-    )
-    rf = RandomForestClassifier(
-        n_estimators=300,
-        max_depth=10,
-        min_samples_leaf=4,
-        min_samples_split=5,
-        bootstrap=True,
-        random_state=42,
-        n_jobs=-1,
-    )
-
-    estimators = [
-        ("xgb", Pipeline([("preprocessor", preprocessor), ("model", xgb)])),
-        ("lgb", Pipeline([("preprocessor", preprocessor), ("model", lgb)])),
-        ("cat", Pipeline([("preprocessor", preprocessor), ("model", cat)])),
-        ("hist", Pipeline([("preprocessor", preprocessor), ("model", hist)])),
-        ("rf", Pipeline([("preprocessor", preprocessor), ("model", rf)])),
+    # ---- Define base models with sensible defaults (no tuning) ----
+    base_models = [
+        (
+            "xgb",
+            XGBClassifier(
+                n_estimators=300,
+                max_depth=5,
+                learning_rate=0.03,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                reg_alpha=1.0,
+                reg_lambda=5.0,
+                random_state=42,
+                verbosity=0,
+                use_label_encoder=False,
+                eval_metric="logloss",
+            ),
+        ),
+        (
+            "lgb",
+            LGBMClassifier(
+                n_estimators=300,
+                num_leaves=31,
+                learning_rate=0.03,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                min_child_samples=20,
+                reg_alpha=0.1,
+                reg_lambda=0.1,
+                random_state=42,
+                verbose=-1,
+            ),
+        ),
+        (
+            "cat",
+            CatBoostClassifier(
+                iterations=300,
+                depth=6,
+                learning_rate=0.03,
+                l2_leaf_reg=3,
+                random_strength=1.0,
+                bagging_temperature=0.5,
+                random_state=42,
+                verbose=0,
+            ),
+        ),
+        (
+            "hist",
+            HistGradientBoostingClassifier(
+                max_iter=300,
+                max_depth=5,
+                learning_rate=0.03,
+                l2_regularization=1.5,
+                random_state=42,
+            ),
+        ),
     ]
 
-    # ---- Soft voting ensemble ----
+    # Build voting ensemble (soft voting)
     print("Building soft voting ensemble ...")
-    voting = VotingClassifier(
-        estimators=estimators,
+    voter = VotingClassifier(
+        estimators=base_models,
         voting="soft",
         n_jobs=-1,
     )
 
-    # ---- Cross‑validation evaluation ----
-    print("Evaluating ensemble with 5-fold cross-validation ...")
-    cv_outer = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    # Put everything in a pipeline
+    pipeline = Pipeline(
+        [
+            ("preprocessor", preprocessor),
+            ("voter", voter),
+        ]
+    )
+
+    # ---- Evaluate with 5-fold outer CV ----
+    print("Evaluating voting ensemble with 5-fold cross-validation ...")
+    outer_cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
     scores = cross_val_score(
-        voting, X, y, cv=cv_outer, scoring="roc_auc", n_jobs=-1
+        pipeline, X, y, cv=outer_cv, scoring="roc_auc", n_jobs=-1
     )
     final_score = float(np.mean(scores))
     print(f"Voting Ensemble CV AUC: {final_score:.4f}")
@@ -360,8 +364,8 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     # ---- Generate submission ----
     if test_path and os.path.exists(test_path):
         print("Generating submission ...")
-        # Fit the final ensemble on all training data
-        voting.fit(X, y)
+        # Retrain full pipeline on all training data
+        pipeline.fit(X, y)
 
         # Process test data
         test_df_raw = pd.read_csv(test_path, nrows=nrows)
@@ -374,6 +378,7 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
             for col in test_df.columns
         ]
 
+        # Remove id and target from test features
         if id_col_name and id_col_name in test_df.columns:
             test_X_raw = test_df.drop(columns=[id_col_name])
         elif test_id_col_name in test_df.columns:
@@ -385,6 +390,9 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
             test_X_raw = test_X_raw.drop(columns=[target_col])
 
         test_X = engineer_features(test_X_raw)
+        test_X.columns = [
+            re.sub(r"[^\w\s]", "", col).replace(" ", "_") for col in test_X.columns
+        ]
 
         # Align columns to training
         for col in set(X.columns) - set(test_X.columns):
@@ -394,7 +402,7 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
                 test_X[col] = "Missing"
         test_X = test_X[X.columns]
 
-        preds = voting.predict_proba(test_X)[:, 1]
+        preds = pipeline.predict_proba(test_X)[:, 1]
 
         submission = pd.DataFrame({test_id_col_name: test_id_series.values})
         submission[target_col] = preds
