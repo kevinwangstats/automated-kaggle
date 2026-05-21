@@ -154,7 +154,7 @@ def format_submission(config_path="config.yaml", workspace_mgr=None):
             print("[kaggle_ops] Converting probabilities to discrete classes (threshold=0.5).")
             # If probabilities are between 0 and 1, convert to 0/1
             if pd.api.types.is_float_dtype(final_sub[target_col]) and final_sub[target_col].between(0, 1).all():
-                final_sub[target_col] = (final_sub[target_col] >= 0.5).astype(int)
+                final_sub[target_col] = (final_sub[target_col] >= 0.5)
 
     output_path = workspace_mgr.get_file_path("submission.csv") if workspace_mgr else get_submission_path(config)
     final_sub.to_csv(output_path, index=False)
