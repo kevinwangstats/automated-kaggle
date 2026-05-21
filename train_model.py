@@ -1,9 +1,10 @@
 """
 train_model.py
 
-Improved script using a soft voting ensemble of top base models (XGBoost, LightGBM,
-CatBoost, HistGradientBoosting) to avoid overfitting caused by hyper‑parameter tuning
-of the previous stacking approach. Dataset‑agnostic, reads configuration from YAML.
+Dataset‑agnostic training script: loads data, engineers features, evaluates multiple
+models through cross‑validation, selects the best one, and generates a submission.
+Supports a --config argument (default: config.yaml) and outputs metrics.json and
+raw_submission.csv into the directory specified by --output_dir.
 """
 
 import argparse
@@ -16,11 +17,15 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import yaml
-from lightgbm import LGBMClassifier
+
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import (
+    GradientBoostingClassifier,
     HistGradientBoostingClassifier,
+    RandomForestClassifier,
+    StackingClassifier,
     VotingClassifier,
+    ExtraTreesClassifier,
 )
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
@@ -34,31 +39,47 @@ from sklearn.preprocessing import (
     OneHotEncoder,
     StandardScaler,
     TargetEncoder,
+    FunctionTransformer,
 )
 from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
 from catboost import CatBoostClassifier
 
 warnings.filterwarnings("ignore")
 
 
+# ----------------------------------------------------------------------
+# Helper: sanitize column names
+# ----------------------------------------------------------------------
+def sanitize_columns(cols):
+    """Replace non‑alphanumeric characters (except underscore) and spaces."""
+    return [re.sub(r"[^\w\s]", "", col).replace(" ", "_") for col in cols]
+
+
+# ----------------------------------------------------------------------
+# Config loading (dataset‑agnostic)
+# ----------------------------------------------------------------------
 def load_config(config_path="config.yaml"):
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
     repo_root = os.environ.get("REPO_ROOT", os.getcwd())
     for key in ["dataset_path", "test_path"]:
         if config.get(key) and not os.path.isabs(config.get(key)):
-            config[key] = os.path.join(repo_root, config[key])
+            config[key] = os.path.join(repo_root, config.get(key))
     return config
 
 
+# ----------------------------------------------------------------------
+# Feature engineering (applied to both train and test)
+# ----------------------------------------------------------------------
 def engineer_features(df):
     """
-    Fast feature engineering: extracts titles, deck, ticket group size,
-    family features, interactions, etc. No slow iterative imputation.
+    Enhanced feature engineering for the Titanic dataset.
+    Handles missing values, creates title, deck, ticket, family & interaction features.
     """
     df = df.copy()
 
-    # Basic imputation
+    # --- Basic imputation -------------------------------------------------
     if "Embarked" in df.columns:
         mode_val = df["Embarked"].mode()
         df["Embarked"] = df["Embarked"].fillna(
@@ -67,7 +88,7 @@ def engineer_features(df):
     if "Fare" in df.columns:
         df["Fare"] = df["Fare"].fillna(df["Fare"].median())
 
-    # Title from Name
+    # --- Name → Title, NameLength -----------------------------------------
     if "Name" in df.columns:
         df["NameLength"] = df["Name"].apply(len)
         df["Title"] = (
@@ -97,7 +118,7 @@ def engineer_features(df):
         df["TitleFreq"] = df.groupby("Title")["Title"].transform("count") / len(df)
         df = df.drop(columns=["Name"])
 
-    # Ticket features
+    # --- Ticket features --------------------------------------------------
     if "Ticket" in df.columns:
         df["TicketPrefix"] = df["Ticket"].apply(
             lambda x: "".join(re.findall(r"^[A-Za-z]+", str(x)))
@@ -106,36 +127,58 @@ def engineer_features(df):
         )
         df["TicketGroupSize"] = df.groupby("Ticket")["Ticket"].transform("count")
         df["FarePerPerson"] = df["Fare"] / df["TicketGroupSize"]
+        # numeric part of ticket
+        df["TicketNumber"] = (
+            df["Ticket"]
+            .astype(str)
+            .str.extract(r"(\d+)$")
+            .astype(float)
+            .fillna(-1)
+            .astype(int)
+        )
         df = df.drop(columns=["Ticket"])
     else:
         df["TicketPrefix"] = "Unknown"
         df["TicketGroupSize"] = 1
         df["FarePerPerson"] = df["Fare"] if "Fare" in df.columns else 0
+        df["TicketNumber"] = -1
 
-    # Age imputation (fast group median then global median)
+    # --- Age imputation & derived features --------------------------------
     if "Age" in df.columns:
         df["AgeMissing"] = df["Age"].isna().astype(int)
-        if (
-            "Title" in df.columns
-            and "Pclass" in df.columns
-            and "Sex" in df.columns
-        ):
+        if "Title" in df.columns and "Pclass" in df.columns and "Sex" in df.columns:
             df["Age"] = df.groupby(["Pclass", "Sex", "Title"])[
                 "Age"
             ].transform(lambda x: x.fillna(x.median()))
         df["Age"] = df["Age"].fillna(df["Age"].median())
 
-    # Cabin features
+    # --- Cabin → HasCabin, Deck, DeckFreq, CabinNumber --------------------
     if "Cabin" in df.columns:
         df["HasCabin"] = df["Cabin"].notna().astype(int)
         df["Deck"] = df["Cabin"].apply(
             lambda x: str(x)[0] if pd.notna(x) else "U"
         )
-        df["Deck"] = df["Deck"].replace(["T", "A", "G", "F"], "Rare")
+        # Group rare decks
+        rare_decks = ["T", "A", "G", "F"]  # seen in EDA
+        df["Deck"] = df["Deck"].replace(rare_decks, "Rare")
         df["DeckFreq"] = df["Deck"].map(df["Deck"].value_counts(normalize=True))
+        # Numeric part of cabin
+        df["CabinNumber"] = (
+            df["Cabin"]
+            .astype(str)
+            .str.extract(r"(\d+)")
+            .astype(float)
+            .fillna(-1)
+            .astype(int)
+        )
         df = df.drop(columns=["Cabin"])
+    else:
+        df["HasCabin"] = 0
+        df["Deck"] = "U"
+        df["DeckFreq"] = 0
+        df["CabinNumber"] = -1
 
-    # Family/group features
+    # --- Family / group features ------------------------------------------
     if "SibSp" in df.columns and "Parch" in df.columns:
         df["FamilySize"] = df["SibSp"] + df["Parch"] + 1
         df["GroupSize"] = df[["FamilySize", "TicketGroupSize"]].max(axis=1)
@@ -154,9 +197,11 @@ def engineer_features(df):
         df["IsAlone"] = 1
         df["GroupCategory"] = "Alone"
 
-    # Interactions
+    # --- Interactions -----------------------------------------------------
     if "Sex" in df.columns and "Pclass" in df.columns:
         df["SexClass"] = df["Sex"].astype(str) + "_" + df["Pclass"].astype(str)
+    if "Sex" in df.columns and "Embarked" in df.columns:
+        df["SexEmbarked"] = df["Sex"].astype(str) + "_" + df["Embarked"].astype(str)
     if "Pclass" in df.columns and "Age" in df.columns:
         df["AgeClass"] = df["Age"] * df["Pclass"]
     if "Sex" in df.columns and "Age" in df.columns:
@@ -166,8 +211,10 @@ def engineer_features(df):
             df["Age"], bins=bins, labels=labels, right=False
         ).astype(str)
         df["SexAge"] = df["Sex"].astype(str) + "_" + age_cat
+    if "Deck" in df.columns and "Pclass" in df.columns:
+        df["DeckClass"] = df["Deck"].astype(str) + "_" + df["Pclass"].astype(str)
 
-    # Fare features
+    # --- Fare features ----------------------------------------------------
     if "FarePerPerson" in df.columns:
         df["LogFarePerPerson"] = np.log1p(df["FarePerPerson"])
         lower = df["LogFarePerPerson"].quantile(0.01)
@@ -183,25 +230,228 @@ def engineer_features(df):
             .astype(str)
         )
 
+    # --- Extra numeric features -------------------------------------------
     if "Age" in df.columns and "FarePerPerson" in df.columns:
         df["Age_mul_FarePerPerson"] = df["Age"] * df["FarePerPerson"]
-
     if "Age" in df.columns:
         df["AgeSquared"] = df["Age"] ** 2
         df["IsInfant"] = (df["Age"] <= 2).astype(int)
         df["IsElderly"] = (df["Age"] >= 60).astype(int)
 
-    # Drop raw Fare
+    # Drop raw Fare (we have FarePerPerson)
     if "Fare" in df.columns:
         df = df.drop(columns=["Fare"])
 
-    # Fill any remaining categorical NaNs
+    # Fill any remaining categorical NaNs with 'Missing'
     for col in df.select_dtypes(include=["object", "category"]).columns:
         df[col] = df[col].fillna("Missing").astype(str)
 
     return df
 
 
+# ----------------------------------------------------------------------
+# Model factory: returns a list of (name, pipeline) candidates
+# ----------------------------------------------------------------------
+def get_model_candidates(preprocessor, random_state=42):
+    """
+    Creates a diverse set of classifiers with different hyper‑parameters.
+    Each entry is (name, Pipeline([("preprocessor", preprocessor), (name, clf)])).
+    """
+    models = []
+
+    # --- CatBoost variants -------------------------------------------------
+    for lr, depth, iters, l2_leaf in [
+        (0.03, 6, 500, 3.0),
+        (0.02, 5, 700, 5.0),
+        (0.015, 6, 800, 3.0),
+    ]:
+        cb = CatBoostClassifier(
+            iterations=iters,
+            depth=depth,
+            learning_rate=lr,
+            l2_leaf_reg=l2_leaf,
+            random_strength=1.0,
+            bagging_temperature=0.5,
+            random_state=random_state,
+            verbose=0,
+        )
+        models.append(("catboost", Pipeline([
+            ("preprocessor", preprocessor),
+            ("catboost", cb),
+        ])))
+
+    # --- XGBoost variants --------------------------------------------------
+    for lr, md, n_est, subsample, colsample in [
+        (0.03, 5, 500, 0.7, 0.7),
+        (0.02, 6, 700, 0.8, 0.8),
+        (0.01, 4, 1000, 0.7, 0.7),
+    ]:
+        xgb = XGBClassifier(
+            n_estimators=n_est,
+            max_depth=md,
+            learning_rate=lr,
+            subsample=subsample,
+            colsample_bytree=colsample,
+            reg_alpha=0.5,
+            reg_lambda=1.0,
+            random_state=random_state,
+            verbosity=0,
+            use_label_encoder=False,
+            eval_metric="logloss",
+        )
+        models.append(("xgb", Pipeline([
+            ("preprocessor", preprocessor),
+            ("xgb", xgb),
+        ])))
+
+    # --- LightGBM variants -------------------------------------------------
+    for lr, n_est, num_leaves, subsample, colsample in [
+        (0.03, 500, 31, 0.7, 0.7),
+        (0.02, 700, 50, 0.8, 0.8),
+    ]:
+        lgb = LGBMClassifier(
+            n_estimators=n_est,
+            learning_rate=lr,
+            num_leaves=num_leaves,
+            subsample=subsample,
+            colsample_bytree=colsample,
+            min_child_samples=20,
+            reg_alpha=0.1,
+            reg_lambda=0.1,
+            random_state=random_state,
+            verbose=-1,
+        )
+        models.append(("lgb", Pipeline([
+            ("preprocessor", preprocessor),
+            ("lgb", lgb),
+        ])))
+
+    # --- HistGradientBoosting ----------------------------------------------
+    for lr, mi, md, l2 in [
+        (0.03, 500, 5, 0.5),
+        (0.02, 800, 4, 1.0),
+    ]:
+        hist = HistGradientBoostingClassifier(
+            max_iter=mi,
+            learning_rate=lr,
+            max_depth=md,
+            l2_regularization=l2,
+            random_state=random_state,
+        )
+        models.append(("histgb", Pipeline([
+            ("preprocessor", preprocessor),
+            ("histgb", hist),
+        ])))
+
+    # --- RandomForest ------------------------------------------------------
+    for n_est, max_depth, min_samples_leaf in [
+        (500, 8, 2),
+        (700, None, 4),
+    ]:
+        rf = RandomForestClassifier(
+            n_estimators=n_est,
+            max_depth=max_depth,
+            min_samples_leaf=min_samples_leaf,
+            class_weight="balanced",
+            random_state=random_state,
+            n_jobs=-1,
+        )
+        models.append(("rf", Pipeline([
+            ("preprocessor", preprocessor),
+            ("rf", rf),
+        ])))
+
+    # --- ExtraTrees --------------------------------------------------------
+    et = ExtraTreesClassifier(
+        n_estimators=500,
+        max_depth=None,
+        min_samples_leaf=4,
+        class_weight="balanced",
+        random_state=random_state,
+        n_jobs=-1,
+    )
+    models.append(("extra_trees", Pipeline([
+        ("preprocessor", preprocessor),
+        ("extra_trees", et),
+    ])))
+
+    # --- GradientBoosting (sklearn) ----------------------------------------
+    for lr, n_est, md in [
+        (0.03, 500, 4),
+        (0.02, 700, 5),
+    ]:
+        gb = GradientBoostingClassifier(
+            n_estimators=n_est,
+            learning_rate=lr,
+            max_depth=md,
+            subsample=0.8,
+            random_state=random_state,
+        )
+        models.append(("gb", Pipeline([
+            ("preprocessor", preprocessor),
+            ("gb", gb),
+        ])))
+
+    # --- VotingClassifier (soft) combinations ------------------------------
+    # Create a few ensembles mixing the above models (using best hyperparams)
+    # We'll build a VotingClassifier with hard-coded base estimators.
+    # Use base estimators defined above with fixed hyperparameters.
+    voting_configs = [
+        # mix xgb, lgb, cat, hist (all soft)
+        {
+            "name": "voting_1",
+            "estimators": [
+                ("xgb", XGBClassifier(n_estimators=700, max_depth=5, learning_rate=0.02,
+                                      subsample=0.8, colsample_bytree=0.8,
+                                      reg_alpha=0.5, reg_lambda=1.0,
+                                      random_state=random_state, verbosity=0,
+                                      use_label_encoder=False, eval_metric="logloss")),
+                ("lgb", LGBMClassifier(n_estimators=700, learning_rate=0.02, num_leaves=31,
+                                       subsample=0.8, colsample_bytree=0.8,
+                                       random_state=random_state, verbose=-1)),
+                ("cat", CatBoostClassifier(iterations=700, depth=6, learning_rate=0.02,
+                                           l2_leaf_reg=3.0, random_strength=1.0,
+                                           bagging_temperature=0.5,
+                                           random_state=random_state, verbose=0)),
+                ("hist", HistGradientBoostingClassifier(max_iter=700, learning_rate=0.02,
+                                                        max_depth=5,
+                                                        random_state=random_state)),
+            ],
+            "voting": "soft",
+        },
+        # mix xgb, lgb, cat
+        {
+            "name": "voting_2",
+            "estimators": [
+                ("xgb", XGBClassifier(n_estimators=700, max_depth=5, learning_rate=0.02,
+                                      subsample=0.8, colsample_bytree=0.8,
+                                      random_state=random_state, verbosity=0,
+                                      use_label_encoder=False, eval_metric="logloss")),
+                ("lgb", LGBMClassifier(n_estimators=700, learning_rate=0.02, num_leaves=31,
+                                       subsample=0.8, colsample_bytree=0.8,
+                                       random_state=random_state, verbose=-1)),
+                ("cat", CatBoostClassifier(iterations=700, depth=6, learning_rate=0.02,
+                                           l2_leaf_reg=3.0, random_state=random_state,
+                                           verbose=0)),
+            ],
+            "voting": "soft",
+        },
+    ]
+    for cfg in voting_configs:
+        vc = VotingClassifier(
+            estimators=cfg["estimators"], voting=cfg["voting"], n_jobs=-1
+        )
+        models.append((cfg["name"], Pipeline([
+            ("preprocessor", preprocessor),
+            ("voting", vc),
+        ])))
+
+    return models
+
+
+# ----------------------------------------------------------------------
+# Main training & evaluation
+# ----------------------------------------------------------------------
 def train_and_evaluate(config_path="config.yaml", output_dir="."):
     config = load_config(config_path)
     dataset_path = config.get("dataset_path")
@@ -212,7 +462,7 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     if not dataset_path or not target_col:
         raise ValueError("dataset_path and target_col must be in config.")
 
-    # ---- Load data ----
+    # ---- Load data --------------------------------------------------------
     df = pd.read_csv(dataset_path, nrows=nrows)
     if target_col not in df.columns:
         raise ValueError(f"Target column '{target_col}' not found.")
@@ -222,11 +472,9 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     X_raw = df_train.drop(columns=[target_col])
 
     # sanitize column names
-    X_raw.columns = [
-        re.sub(r"[^\w\s]", "", col).replace(" ", "_") for col in X_raw.columns
-    ]
+    X_raw.columns = sanitize_columns(X_raw.columns)
 
-    # ID column detection – remove from features if present
+    # ---- ID column detection & removal -----------------------------------
     id_col_name = None
     potential_ids = ["passengerid", "id", "index"]
     first_col = X_raw.columns[0]
@@ -237,23 +485,21 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         id_col_name = first_col
         X_raw = X_raw.drop(columns=[id_col_name])
 
-    # Feature engineering
+    # ---- Feature engineering ----------------------------------------------
     X = engineer_features(X_raw)
-    X.columns = [
-        re.sub(r"[^\w\s]", "", col).replace(" ", "_") for col in X.columns
-    ]
+    X.columns = sanitize_columns(X.columns)
 
-    # Target encoding
+    # ---- Target encoding --------------------------------------------------
     le = LabelEncoder()
     y = le.fit_transform(y_raw)
 
-    # Column types
+    # ---- Column categorisation & preprocessor ----------------------------
     categorical_features = list(
         X.select_dtypes(include=["object", "category"]).columns
     )
     numerical_features = list(X.select_dtypes(include=np.number).columns)
 
-    # Preprocessor
+    # Prefer TargetEncoder, fallback to OneHotEncoder
     try:
         cat_transformer = TargetEncoder(target_type="binary", random_state=42)
         print("Using TargetEncoder for categorical features.")
@@ -271,114 +517,54 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         remainder="passthrough",
     )
 
-    # ---- Define base models with sensible defaults (no tuning) ----
-    base_models = [
-        (
-            "xgb",
-            XGBClassifier(
-                n_estimators=300,
-                max_depth=5,
-                learning_rate=0.03,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                reg_alpha=1.0,
-                reg_lambda=5.0,
-                random_state=42,
-                verbosity=0,
-                use_label_encoder=False,
-                eval_metric="logloss",
-            ),
-        ),
-        (
-            "lgb",
-            LGBMClassifier(
-                n_estimators=300,
-                num_leaves=31,
-                learning_rate=0.03,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                min_child_samples=20,
-                reg_alpha=0.1,
-                reg_lambda=0.1,
-                random_state=42,
-                verbose=-1,
-            ),
-        ),
-        (
-            "cat",
-            CatBoostClassifier(
-                iterations=300,
-                depth=6,
-                learning_rate=0.03,
-                l2_leaf_reg=3,
-                random_strength=1.0,
-                bagging_temperature=0.5,
-                random_state=42,
-                verbose=0,
-            ),
-        ),
-        (
-            "hist",
-            HistGradientBoostingClassifier(
-                max_iter=300,
-                max_depth=5,
-                learning_rate=0.03,
-                l2_regularization=1.5,
-                random_state=42,
-            ),
-        ),
-    ]
+    # ---- Candidate models -------------------------------------------------
+    print("Assembling candidate models ...")
+    candidates = get_model_candidates(preprocessor, random_state=42)
 
-    # Build voting ensemble (soft voting)
-    print("Building soft voting ensemble ...")
-    voter = VotingClassifier(
-        estimators=base_models,
-        voting="soft",
-        n_jobs=-1,
-    )
-
-    # Put everything in a pipeline
-    pipeline = Pipeline(
-        [
-            ("preprocessor", preprocessor),
-            ("voter", voter),
-        ]
-    )
-
-    # ---- Evaluate with 5-fold outer CV ----
-    print("Evaluating voting ensemble with 5-fold cross-validation ...")
+    # ---- Evaluate all candidates via 5‑fold CV ----------------------------
     outer_cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-    scores = cross_val_score(
-        pipeline, X, y, cv=outer_cv, scoring="roc_auc", n_jobs=-1
-    )
-    final_score = float(np.mean(scores))
-    print(f"Voting Ensemble CV AUC: {final_score:.4f}")
+    best_model = None
+    best_score = -1.0
+    best_name = ""
 
-    # ---- Save metrics ----
+    for name, pipeline in candidates:
+        try:
+            scores = cross_val_score(
+                pipeline, X, y, cv=outer_cv, scoring="roc_auc", n_jobs=-1
+            )
+            mean_score = float(np.mean(scores))
+            print(f"Model {name:20s}  ->  CV AUC = {mean_score:.6f}")
+            if mean_score > best_score:
+                best_score = mean_score
+                best_name = name
+                best_model = pipeline
+        except Exception as e:
+            print(f"Model {name} failed: {e}")
+
+    print(f"\nBest model: {best_name} with CV AUC = {best_score:.6f}")
+
+    # ---- Save metrics -----------------------------------------------------
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     with open(out_dir / "metrics.json", "w") as f:
-        json.dump({"cv_score": final_score}, f)
-    print(f"CV Score written to metrics.json: {final_score:.4f}")
+        json.dump({"cv_score": best_score}, f)
+    print(f"CV Score written to metrics.json: {best_score:.6f}")
 
-    # ---- Generate submission ----
-    if test_path and os.path.exists(test_path):
-        print("Generating submission ...")
-        # Retrain full pipeline on all training data
-        pipeline.fit(X, y)
+    # ---- Generate submission ----------------------------------------------
+    if test_path and os.path.exists(test_path) and best_model is not None:
+        print("Generating submission with best model ...")
+        # Refit best pipeline on full training data
+        best_model.fit(X, y)
 
-        # Process test data
+        # Process test set
         test_df_raw = pd.read_csv(test_path, nrows=nrows)
         test_id_series = test_df_raw.iloc[:, 0].copy()
         test_id_col_name = test_df_raw.columns[0]
 
         test_df = test_df_raw.copy()
-        test_df.columns = [
-            re.sub(r"[^\w\s]", "", col).replace(" ", "_")
-            for col in test_df.columns
-        ]
+        test_df.columns = sanitize_columns(test_df.columns)
 
-        # Remove id and target from test features
+        # Remove id column from test features
         if id_col_name and id_col_name in test_df.columns:
             test_X_raw = test_df.drop(columns=[id_col_name])
         elif test_id_col_name in test_df.columns:
@@ -390,11 +576,9 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
             test_X_raw = test_X_raw.drop(columns=[target_col])
 
         test_X = engineer_features(test_X_raw)
-        test_X.columns = [
-            re.sub(r"[^\w\s]", "", col).replace(" ", "_") for col in test_X.columns
-        ]
+        test_X.columns = sanitize_columns(test_X.columns)
 
-        # Align columns to training
+        # Align columns with training set
         for col in set(X.columns) - set(test_X.columns):
             if X[col].dtype in [np.float64, np.int64]:
                 test_X[col] = 0
@@ -402,16 +586,19 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
                 test_X[col] = "Missing"
         test_X = test_X[X.columns]
 
-        preds = pipeline.predict_proba(test_X)[:, 1]
+        preds = best_model.predict_proba(test_X)[:, 1]
 
         submission = pd.DataFrame({test_id_col_name: test_id_series.values})
         submission[target_col] = preds
         submission.to_csv(out_dir / "raw_submission.csv", index=False)
         print("Saved raw_submission.csv")
 
-    return final_score
+    return best_score
 
 
+# ----------------------------------------------------------------------
+# Entry point
+# ----------------------------------------------------------------------
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -421,7 +608,7 @@ if __name__ == "__main__":
         "--output_dir",
         type=str,
         default=".",
-        help="Directory to save outputs",
+        help="Directory to save outputs (metrics.json, raw_submission.csv)",
     )
     args = parser.parse_args()
 
