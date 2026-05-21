@@ -39,7 +39,6 @@ from sklearn.preprocessing import (
     OneHotEncoder,
     StandardScaler,
     TargetEncoder,
-    FunctionTransformer,
 )
 from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
@@ -197,6 +196,16 @@ def engineer_features(df):
         df["IsAlone"] = 1
         df["GroupCategory"] = "Alone"
 
+    # --- Additional family & demographic flags ----------------------------
+    if "Age" in df.columns and "Sex" in df.columns:
+        df["IsChild"] = (df["Age"] <= 12).astype(int)
+        df["IsWoman"] = (df["Sex"].astype(str) == "female").astype(int)
+        df["IsMother"] = (
+            (df["Sex"].astype(str) == "female")
+            & (df["Parch"] > 0)
+            & (df["Age"] > 18)
+        ).astype(int)
+
     # --- Interactions -----------------------------------------------------
     if "Sex" in df.columns and "Pclass" in df.columns:
         df["SexClass"] = df["Sex"].astype(str) + "_" + df["Pclass"].astype(str)
@@ -229,6 +238,7 @@ def engineer_features(df):
             )
             .astype(str)
         )
+        df["FarePerPersonRank"] = df["FarePerPerson"].rank(pct=True)
 
     # --- Extra numeric features -------------------------------------------
     if "Age" in df.columns and "FarePerPerson" in df.columns:
@@ -237,6 +247,10 @@ def engineer_features(df):
         df["AgeSquared"] = df["Age"] ** 2
         df["IsInfant"] = (df["Age"] <= 2).astype(int)
         df["IsElderly"] = (df["Age"] >= 60).astype(int)
+    if "FamilySize" in df.columns:
+        df["LogFamilySize"] = np.log1p(df["FamilySize"])
+    if "Age" in df.columns and "FamilySize" in df.columns:
+        df["Age_mul_FamilySize"] = df["Age"] * df["FamilySize"]
 
     # Drop raw Fare (we have FarePerPerson)
     if "Fare" in df.columns:
@@ -260,17 +274,18 @@ def get_model_candidates(preprocessor, random_state=42):
     models = []
 
     # --- CatBoost variants -------------------------------------------------
-    for lr, depth, iters, l2_leaf in [
-        (0.03, 6, 500, 3.0),
-        (0.02, 5, 700, 5.0),
-        (0.015, 6, 800, 3.0),
+    for lr, depth, iters, l2_leaf, rs in [
+        (0.03, 6, 500, 3.0, 1.0),
+        (0.02, 5, 700, 5.0, 2.0),
+        (0.015, 6, 900, 3.0, 1.0),
+        (0.01, 5, 1200, 7.0, 2.0),   # higher iterations, stronger reg
     ]:
         cb = CatBoostClassifier(
             iterations=iters,
             depth=depth,
             learning_rate=lr,
             l2_leaf_reg=l2_leaf,
-            random_strength=1.0,
+            random_strength=rs,
             bagging_temperature=0.5,
             random_state=random_state,
             verbose=0,
@@ -281,10 +296,11 @@ def get_model_candidates(preprocessor, random_state=42):
         ])))
 
     # --- XGBoost variants --------------------------------------------------
-    for lr, md, n_est, subsample, colsample in [
-        (0.03, 5, 500, 0.7, 0.7),
-        (0.02, 6, 700, 0.8, 0.8),
-        (0.01, 4, 1000, 0.7, 0.7),
+    for lr, md, n_est, subsample, colsample, alpha, lambd in [
+        (0.03, 5, 500, 0.7, 0.7, 0.5, 1.0),
+        (0.02, 6, 700, 0.8, 0.8, 0.1, 1.0),
+        (0.01, 4, 1000, 0.7, 0.7, 0.5, 1.0),
+        (0.015, 5, 1200, 0.8, 0.8, 0.2, 1.5),
     ]:
         xgb = XGBClassifier(
             n_estimators=n_est,
@@ -292,8 +308,8 @@ def get_model_candidates(preprocessor, random_state=42):
             learning_rate=lr,
             subsample=subsample,
             colsample_bytree=colsample,
-            reg_alpha=0.5,
-            reg_lambda=1.0,
+            reg_alpha=alpha,
+            reg_lambda=lambd,
             random_state=random_state,
             verbosity=0,
             use_label_encoder=False,
@@ -308,6 +324,7 @@ def get_model_candidates(preprocessor, random_state=42):
     for lr, n_est, num_leaves, subsample, colsample in [
         (0.03, 500, 31, 0.7, 0.7),
         (0.02, 700, 50, 0.8, 0.8),
+        (0.015, 900, 63, 0.8, 0.8),
     ]:
         lgb = LGBMClassifier(
             n_estimators=n_est,
@@ -330,6 +347,7 @@ def get_model_candidates(preprocessor, random_state=42):
     for lr, mi, md, l2 in [
         (0.03, 500, 5, 0.5),
         (0.02, 800, 4, 1.0),
+        (0.015, 1000, 6, 2.0),
     ]:
         hist = HistGradientBoostingClassifier(
             max_iter=mi,
@@ -347,6 +365,7 @@ def get_model_candidates(preprocessor, random_state=42):
     for n_est, max_depth, min_samples_leaf in [
         (500, 8, 2),
         (700, None, 4),
+        (1000, 10, 1),
     ]:
         rf = RandomForestClassifier(
             n_estimators=n_est,
@@ -363,7 +382,7 @@ def get_model_candidates(preprocessor, random_state=42):
 
     # --- ExtraTrees --------------------------------------------------------
     et = ExtraTreesClassifier(
-        n_estimators=500,
+        n_estimators=800,
         max_depth=None,
         min_samples_leaf=4,
         class_weight="balanced",
@@ -393,11 +412,7 @@ def get_model_candidates(preprocessor, random_state=42):
         ])))
 
     # --- VotingClassifier (soft) combinations ------------------------------
-    # Create a few ensembles mixing the above models (using best hyperparams)
-    # We'll build a VotingClassifier with hard-coded base estimators.
-    # Use base estimators defined above with fixed hyperparameters.
     voting_configs = [
-        # mix xgb, lgb, cat, hist (all soft)
         {
             "name": "voting_1",
             "estimators": [
@@ -419,7 +434,6 @@ def get_model_candidates(preprocessor, random_state=42):
             ],
             "voting": "soft",
         },
-        # mix xgb, lgb, cat
         {
             "name": "voting_2",
             "estimators": [
@@ -444,6 +458,43 @@ def get_model_candidates(preprocessor, random_state=42):
         models.append((cfg["name"], Pipeline([
             ("preprocessor", preprocessor),
             ("voting", vc),
+        ])))
+
+    # --- StackingClassifier ------------------------------------------------
+    # Combine several strong base models with a LogisticRegression meta-learner
+    base_estimators = [
+        ("cat", CatBoostClassifier(iterations=700, depth=6, learning_rate=0.02,
+                                   l2_leaf_reg=3.0, random_strength=1.0,
+                                   bagging_temperature=0.5,
+                                   random_state=random_state, verbose=0)),
+        ("xgb", XGBClassifier(n_estimators=700, max_depth=5, learning_rate=0.02,
+                              subsample=0.8, colsample_bytree=0.8,
+                              reg_alpha=0.5, reg_lambda=1.0,
+                              random_state=random_state, verbosity=0,
+                              use_label_encoder=False, eval_metric="logloss")),
+        ("lgb", LGBMClassifier(n_estimators=700, learning_rate=0.02, num_leaves=31,
+                               subsample=0.8, colsample_bytree=0.8,
+                               random_state=random_state, verbose=-1)),
+        ("hist", HistGradientBoostingClassifier(max_iter=700, learning_rate=0.02,
+                                                max_depth=5,
+                                                random_state=random_state)),
+        ("rf", RandomForestClassifier(n_estimators=500, max_depth=8, min_samples_leaf=2,
+                                      class_weight="balanced", random_state=random_state,
+                                      n_jobs=-1)),
+    ]
+    # Two stacking variants with different meta‑learner regularisation
+    for C_val in [0.1, 1.0]:
+        meta = LogisticRegression(C=C_val, solver="lbfgs", max_iter=1000, random_state=random_state)
+        stack = StackingClassifier(
+            estimators=base_estimators,
+            final_estimator=meta,
+            cv=5,
+            stack_method="predict_proba",
+            n_jobs=-1,
+        )
+        models.append((f"stacking_{C_val}", Pipeline([
+            ("preprocessor", preprocessor),
+            ("stacking", stack),
         ])))
 
     return models
@@ -501,8 +552,8 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
 
     # Prefer TargetEncoder, fallback to OneHotEncoder
     try:
-        cat_transformer = TargetEncoder(target_type="binary", random_state=42)
-        print("Using TargetEncoder for categorical features.")
+        cat_transformer = TargetEncoder(target_type="binary", random_state=42, smooth=10)
+        print("Using TargetEncoder for categorical features (smooth=10).")
     except Exception:
         cat_transformer = OneHotEncoder(
             handle_unknown="ignore", sparse_output=False
@@ -521,8 +572,8 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     print("Assembling candidate models ...")
     candidates = get_model_candidates(preprocessor, random_state=42)
 
-    # ---- Evaluate all candidates via 5‑fold CV ----------------------------
-    outer_cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    # ---- Evaluate all candidates via 10‑fold CV ----------------------------
+    outer_cv = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
     best_model = None
     best_score = -1.0
     best_name = ""
