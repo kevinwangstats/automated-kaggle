@@ -16,16 +16,13 @@ If you are looking for technical details on how the pipeline is built, its archi
 
 2. **Dataset Isolation with Git Worktree.** This project uses a parallel directory structure to isolate the core engine (`main` branch) from dataset-specific artifacts (e.g., `titanic` branch). This prevents branch-switching friction and keeps your workspace clean.
 
-   To set up a new dataset environment:
+   To set up a new dataset environment, simply run:
 
    ```bash
-   # 1. Create a branch for your dataset (if it doesn't exist)
-   git branch titanic
-   # 2. Add a worktree in a sibling directory
-   git worktree add ../automated-kaggle-titanic titanic
-   # 3. Change into that directory to run experiments
-   cd ../automated-kaggle-titanic
+   python kaggle_submit.py --setup <dataset_name>
    ```
+   
+   This will automatically install dependencies, branch the repository, create an isolated worktree, and download/extract the competition data via the Kaggle API.
 
 3. **Configure your LLM.** This pipeline uses [`litellm`](https://docs.litellm.ai/docs/providers) to support any LLM provider. Model selection follows this priority order:
    1. `model` field in `config.yaml` (highest priority)

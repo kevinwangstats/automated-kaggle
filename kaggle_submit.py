@@ -10,7 +10,69 @@ import yaml
 import os
 import subprocess
 import argparse
+import sys
 from pathlib import Path
+
+def setup_workspace(dataset_name: str):
+    """
+    Automates the Git worktree setup for a new dataset experiment.
+    Installs requirements, creates the dataset branch, and builds the sibling worktree directory.
+    """
+    print(f"[Setup] Starting setup for dataset: {dataset_name}")
+    
+    # Install requirements
+    print("[Setup] Installing requirements...")
+    try:
+        subprocess.run(["pip", "install", "-r", "requirements.txt"], check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"[Setup] Error installing requirements: {e}")
+        sys.exit(1)
+
+    # Create branch
+    print(f"[Setup] Creating branch '{dataset_name}'...")
+    try:
+        subprocess.run(["git", "branch", dataset_name], check=True, capture_output=True)
+    except subprocess.CalledProcessError:
+        print(f"[Setup] Branch '{dataset_name}' likely already exists. Continuing.")
+
+    # Create worktree
+    project_root = Path(__file__).resolve().parent
+    worktree_path = project_root.parent / f"automated-kaggle-{dataset_name}"
+    
+    print(f"[Setup] Creating worktree at '{worktree_path}'...")
+    try:
+        subprocess.run(["git", "worktree", "add", str(worktree_path), dataset_name], check=True, capture_output=True)
+    except subprocess.CalledProcessError:
+        print(f"[Setup] Worktree at '{worktree_path}' likely already exists. Continuing.")
+
+    # Download and extract dataset
+    print(f"[Setup] Downloading Kaggle dataset '{dataset_name}'...")
+    try:
+        subprocess.run(
+            ["kaggle", "competitions", "download", "-c", dataset_name, "-p", f"data/{dataset_name}", "--force"],
+            cwd=str(worktree_path),
+            check=True
+        )
+        print(f"[Setup] Extracting dataset '{dataset_name}'...")
+        subprocess.run(
+            ["unzip", "-o", f"data/{dataset_name}/{dataset_name}.zip", "-d", f"data/{dataset_name}/"],
+            cwd=str(worktree_path),
+            check=True,
+            capture_output=True
+        )
+        print(f"[Setup] Cleaning up zip file...")
+        subprocess.run(
+            ["rm", f"data/{dataset_name}/{dataset_name}.zip"],
+            cwd=str(worktree_path),
+            check=True
+        )
+        print("[Setup] Data successfully downloaded and extracted.")
+    except subprocess.CalledProcessError as e:
+        print(f"[Setup] Warning: Data download/extraction failed. You may need to fetch it manually. Error: {e}")
+    except FileNotFoundError:
+        print("[Setup] Warning: 'kaggle' or 'unzip' command not found. Please ensure they are installed.")
+
+    print(f"[Setup] Workspace ready! To begin, run: cd {worktree_path}")
 
 def get_submission_path(config):
     """
@@ -162,7 +224,12 @@ if __name__ == "__main__":
     parser.add_argument("--config", type=str, default="config.yaml")
     parser.add_argument("--format-only", action="store_true", help="Only format the submission, do not submit.")
     parser.add_argument("--submit-only", action="store_true", help="Only submit the existing submission, do not re-format.")
+    parser.add_argument("--setup", type=str, help="Automates the Git worktree setup for a new dataset.")
     args = parser.parse_args()
+    
+    if args.setup:
+        setup_workspace(args.setup)
+        sys.exit(0)
     
     if args.submit_only:
         submit_to_kaggle(args.config)
