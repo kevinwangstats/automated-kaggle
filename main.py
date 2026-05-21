@@ -13,7 +13,7 @@ import pandas as pd
 import json
 import re
 import wandb
-import kaggle_submit
+import kaggle_ops
 from eda_engine import perform_eda
 from baseline_engine import evaluate_baselines
 from agent_loop import run_agent_loop, run_training_script
@@ -262,8 +262,8 @@ def main():
                     raw_sub_path = Path(workspace_mgr.get_file_path("raw_submission.csv")) if workspace_mgr else Path("raw_submission.csv")
                     if raw_sub_path.exists():
                         log_stage(f"Automated Kaggle Submission for Resumed State")
-                        kaggle_submit.format_submission(args.config, workspace_mgr=workspace_mgr)
-                        kaggle_submit.submit_to_kaggle(args.config, commit_id=git_mgr.get_current_commit(), workspace_mgr=workspace_mgr)
+                        kaggle_ops.format_submission(args.config, workspace_mgr=workspace_mgr)
+                        kaggle_ops.submit_to_kaggle(args.config, commit_id=git_mgr.get_current_commit(), workspace_mgr=workspace_mgr)
                 except Exception as e:
                     log_error(f"Failed to submit resumed state to Kaggle", e)
         else:
@@ -296,8 +296,8 @@ def main():
                     raw_sub_path = Path(workspace_mgr.get_file_path("raw_submission.csv")) if workspace_mgr else Path("raw_submission.csv")
                     if raw_sub_path.exists():
                         log_stage(f"Automated Kaggle Submission for Baseline")
-                        kaggle_submit.format_submission(args.config, workspace_mgr=workspace_mgr)
-                        kaggle_submit.submit_to_kaggle(args.config, commit_id=git_mgr.get_current_commit(), workspace_mgr=workspace_mgr)
+                        kaggle_ops.format_submission(args.config, workspace_mgr=workspace_mgr)
+                        kaggle_ops.submit_to_kaggle(args.config, commit_id=git_mgr.get_current_commit(), workspace_mgr=workspace_mgr)
                 except Exception as e:
                     log_error(f"Failed to submit baseline to Kaggle", e)
 
@@ -347,7 +347,7 @@ def main():
         # Phase 4: Format Final Submission
 
         log_stage("Formatting Final Submission")
-        kaggle_submit.format_submission(args.config, workspace_mgr=workspace_mgr)
+        kaggle_ops.format_submission(args.config, workspace_mgr=workspace_mgr)
 
         if wandb_enabled:
             wandb.finish()

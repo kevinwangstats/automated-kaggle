@@ -19,7 +19,7 @@ If you are looking for technical details on how the pipeline is built, its archi
    To set up a new dataset environment, simply run:
 
    ```bash
-   python kaggle_submit.py --setup <dataset_name>
+   python kaggle_ops.py --setup <dataset_name>
    ```
    
    This will automatically install dependencies, branch the repository, create an isolated worktree, and download/extract the competition data via the Kaggle API.

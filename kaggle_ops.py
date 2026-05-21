@@ -1,9 +1,9 @@
 """
-kaggle_submit.py
+kaggle_ops.py
 
 Formats and automatically submits predictions to Kaggle.
 Can be run as an independent module to manually trigger a submission:
-    python kaggle_submit.py --config config.yaml [--submit-only | --format-only]
+    python kaggle_ops.py --config config.yaml [--submit-only | --format-only]
 """
 import pandas as pd
 import yaml
@@ -103,7 +103,7 @@ def format_submission(config_path="config.yaml", workspace_mgr=None):
     """
     config_p = Path(config_path)
     if not config_p.exists():
-        print(f"[kaggle_submit] Config file {config_path} not found.")
+        print(f"[kaggle_ops] Config file {config_path} not found.")
         return
 
     with open(config_path, "r") as f:
@@ -111,7 +111,7 @@ def format_submission(config_path="config.yaml", workspace_mgr=None):
 
     raw_sub_path = Path(workspace_mgr.get_file_path("raw_submission.csv")) if workspace_mgr else Path("raw_submission.csv")
     if not raw_sub_path.exists():
-        print(f"[kaggle_submit] {raw_sub_path} not found. Ensure the training script outputs this file.")
+        print(f"[kaggle_ops] {raw_sub_path} not found. Ensure the training script outputs this file.")
         return
 
     raw_sub = pd.read_csv(raw_sub_path)
@@ -122,9 +122,9 @@ def format_submission(config_path="config.yaml", workspace_mgr=None):
     pred_prob = config.get("pred_prob", True)
 
     if example_sub_path and Path(example_sub_path).exists():
-        print(f"[kaggle_submit] Reading example submission from {example_sub_path} for column names.")
+        print(f"[kaggle_ops] Reading example submission from {example_sub_path} for column names.")
     else:
-        print(f"[kaggle_submit] Using config pred_prob: {pred_prob}")
+        print(f"[kaggle_ops] Using config pred_prob: {pred_prob}")
 
     final_sub = raw_sub.copy()
     
@@ -136,14 +136,14 @@ def format_submission(config_path="config.yaml", workspace_mgr=None):
             id_col_name = example_sub.columns[0]
             current_id_name = final_sub.columns[0]
             if current_id_name != id_col_name:
-                print(f"[kaggle_submit] Renaming ID column from '{current_id_name}' to '{id_col_name}'")
+                print(f"[kaggle_ops] Renaming ID column from '{current_id_name}' to '{id_col_name}'")
                 final_sub = final_sub.rename(columns={current_id_name: id_col_name})
                 
             # Match target column name
             target_col_name = example_sub.columns[1]
             current_target_name = final_sub.columns[1]
             if current_target_name != target_col_name:
-                print(f"[kaggle_submit] Renaming target column from '{current_target_name}' to '{target_col_name}'")
+                print(f"[kaggle_ops] Renaming target column from '{current_target_name}' to '{target_col_name}'")
                 final_sub = final_sub.rename(columns={current_target_name: target_col_name})
             
             target_col = target_col_name
@@ -151,14 +151,14 @@ def format_submission(config_path="config.yaml", workspace_mgr=None):
     if len(final_sub.columns) > 1:
         target_col = final_sub.columns[1]
         if not pred_prob:
-            print("[kaggle_submit] Converting probabilities to discrete classes (threshold=0.5).")
+            print("[kaggle_ops] Converting probabilities to discrete classes (threshold=0.5).")
             # If probabilities are between 0 and 1, convert to 0/1
             if pd.api.types.is_float_dtype(final_sub[target_col]) and final_sub[target_col].between(0, 1).all():
                 final_sub[target_col] = (final_sub[target_col] >= 0.5).astype(int)
 
     output_path = workspace_mgr.get_file_path("submission.csv") if workspace_mgr else get_submission_path(config)
     final_sub.to_csv(output_path, index=False)
-    print(f"[kaggle_submit] Saved final formatted submission to {output_path}")
+    print(f"[kaggle_ops] Saved final formatted submission to {output_path}")
 
 def submit_to_kaggle(config_path="config.yaml", commit_id=None, workspace_mgr=None):
     """
@@ -167,7 +167,7 @@ def submit_to_kaggle(config_path="config.yaml", commit_id=None, workspace_mgr=No
     """
     config_p = Path(config_path)
     if not config_p.exists():
-        print(f"[kaggle_submit] Config file {config_path} not found.")
+        print(f"[kaggle_ops] Config file {config_path} not found.")
         return
 
     with open(config_path, "r") as f:
@@ -175,12 +175,12 @@ def submit_to_kaggle(config_path="config.yaml", commit_id=None, workspace_mgr=No
 
     auto_submit_val = str(config.get("auto_kaggle_submit", "never")).lower()
     if auto_submit_val in ["false", "never"]:
-        print("[kaggle_submit] auto_kaggle_submit is false or never. Skipping automated Kaggle submission.")
+        print("[kaggle_ops] auto_kaggle_submit is false or never. Skipping automated Kaggle submission.")
         return
 
     sub_path = Path(workspace_mgr.get_file_path("submission.csv")) if workspace_mgr else Path(get_submission_path(config))
     if not sub_path.exists():
-        print(f"[kaggle_submit] {sub_path} not found. Cannot submit.")
+        print(f"[kaggle_ops] {sub_path} not found. Cannot submit.")
         return
 
     dataset_path = config.get("dataset_path", "")
@@ -191,7 +191,7 @@ def submit_to_kaggle(config_path="config.yaml", commit_id=None, workspace_mgr=No
         competition_name = path_parts[1]
     
     if not competition_name:
-        print(f"[kaggle_submit] Could not infer competition name from dataset_path: {dataset_path}")
+        print(f"[kaggle_ops] Could not infer competition name from dataset_path: {dataset_path}")
         return
 
     if not commit_id:
@@ -204,7 +204,7 @@ def submit_to_kaggle(config_path="config.yaml", commit_id=None, workspace_mgr=No
 
     submission_message = f"Agentic AutoML Pipeline Submission (Commit: {commit_id})"
 
-    print(f"[kaggle_submit] Submitting to Kaggle competition: {competition_name} with message: '{submission_message}'")
+    print(f"[kaggle_ops] Submitting to Kaggle competition: {competition_name} with message: '{submission_message}'")
     try:
         result = subprocess.run(
             ["kaggle", "competitions", "submit", "-c", competition_name, "-f", sub_path, "-m", submission_message],
@@ -213,11 +213,11 @@ def submit_to_kaggle(config_path="config.yaml", commit_id=None, workspace_mgr=No
         )
         print(result.stdout)
         if result.stderr:
-            print(f"[kaggle_submit] Errors/Warnings:\n{result.stderr}")
+            print(f"[kaggle_ops] Errors/Warnings:\n{result.stderr}")
     except FileNotFoundError:
-        print("[kaggle_submit] 'kaggle' command not found. Ensure kaggle CLI is installed and configured.")
+        print("[kaggle_ops] 'kaggle' command not found. Ensure kaggle CLI is installed and configured.")
     except Exception as e:
-        print(f"[kaggle_submit] Failed to submit to Kaggle: {e}")
+        print(f"[kaggle_ops] Failed to submit to Kaggle: {e}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

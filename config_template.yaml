@@ -72,7 +72,7 @@ timeout: 600
 # pred_prob: Boolean indicating if the final Kaggle submission should be probabilities (true) 
 # or discrete class labels (false). Default: true.
 # raw_submission.csv ALWAYS contains probabilities for classification;
-# this flag determines if kaggle_submit.py converts them to classes.
+# this flag determines if kaggle_ops.py converts them to classes.
 # Examples: true, false
 pred_prob: true
 
