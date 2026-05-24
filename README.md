@@ -130,5 +130,5 @@ All pipeline artifacts are isolated inside a static workspace directory at `.wor
 - **`EDA.md`**: An automatically generated exploratory data analysis summary.
 - **`metrics.json`**: The cross-validation score contract between the generated script and the orchestrator.
 - **`CHANGELOG.md`**: Stores a human-readable summary of every successful iteration.
-- **`history.json`**: Stores granular metrics, hyperparameters, and git commits for every attempt.
+- **`history.json`**: Stores granular metrics, hyperparameters, and git commits for every attempt. Note that the orchestrator uses **Semantic Memory**: it distills this history into a lightweight summary of reasoning and outcomes for the LLM to prevent context bloat, rather than feeding raw past code strings back into the prompt.
 - **Kaggle Submissions**: The `auto_kaggle_submit` setting in `config.yaml` controls automated API submissions. If set to `"always"`, the pipeline submits to Kaggle on every successful execution that generates a valid prediction file. If set to `"best"`, it submits only when the local CV score strictly beats the historical best. The automated submission message dynamically includes the short Git commit SHA ID of the codebase that generated it, ensuring precise code provenance.
