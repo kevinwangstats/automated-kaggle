@@ -234,6 +234,7 @@ def run_agent_loop(
 CRITICAL: Your script MUST remain dataset-agnostic. 
 - ALWAYS read `dataset_path`, `target_col`, and `test_path` from the configuration file.
 - Support a `--config` command-line argument (using `argparse`) to specify the configuration file path (defaulting to `config.yaml`).
+- Support a `--output_dir` command-line argument (defaulting to `.`). You MUST save `metrics.json` and `raw_submission.csv` inside this directory using `os.path.join`.
 - NEVER hardcode column names (like "Survived") or file paths (like "data/titanic/train.csv").
 - Use the `target_col` variable from the config for all target-related operations, including the submission file column name.
 - When reading the dataset, you MUST preserve the `nrows=...` argument in `pd.read_csv` to prevent Out-Of-Memory crashes during evaluation.
