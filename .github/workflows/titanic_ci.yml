@@ -34,7 +34,17 @@ jobs:
         kaggle competitions download -c titanic -p data/titanic --force
         unzip -o data/titanic/titanic.zip -d data/titanic/
 
-    - name: Run Baseline Engine
+    - name: Install and Start Ollama (Micro-Model)
+      run: |
+        curl -fsSL https://ollama.com/install.sh | sh
+        # Start Ollama server in the background
+        ollama serve &
+        # Give the server a few seconds to initialize
+        sleep 5
+        # Pull a 0.5B parameter model. It downloads in seconds and runs on CPU.
+        ollama pull qwen2.5:0.5b
+
+    - name: Run Pipeline (Baseline + Agent Loop)
       run: |
         python main.py --config .github/configs/titanic_ci_config.yaml -y
 
