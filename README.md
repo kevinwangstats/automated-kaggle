@@ -49,6 +49,13 @@ If you are looking for technical details on how the pipeline is built, its archi
    export ANTHROPIC_API_KEY="sk-ant-..."
    # config.yaml: model: anthropic/claude-3-5-sonnet-20241022
    ```
+   
+   **Moonshot / Kimi:**
+
+   ```bash
+   export MOONSHOT_API_KEY="sk-..."
+   # config.yaml: model: openai/moonshot-v1-8k
+   ```
 
    **Ollama (local, no API key required):**
 
@@ -113,7 +120,7 @@ This prevents accidentally overwriting manually optimized scripts. You can contr
 | `"scratch"` | Always start fresh |
 
 **Important Note on Resuming:**
-When you resume an optimization session, the pipeline will **always execute your existing `train_model.py` as-is first** to establish an empirical cross-validation score. If you manually edit the script between runs, this guarantees your changes are properly evaluated, and the pipeline will automatically log a `HUMAN_INTERVENTION` entry in `history.json` featuring the updated code and its newly evaluated score. This ensures the LLM is always trying to beat a true, verified baseline.
+When resuming, the pipeline **always executes your existing `train_model.py` as-is first** to establish an empirical CV score. If you manually edit the script between runs, it evaluates those changes and logs a `HUMAN_INTERVENTION` entry in `history.json`. This ensures the LLM is always trying to beat a true, verified baseline.
 
 ## Outputs and Tracking
 

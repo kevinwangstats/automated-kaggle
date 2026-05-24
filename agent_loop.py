@@ -22,36 +22,54 @@ from litellm import completion
 from logger import log_stage, log_error, log_metric
 from git_manager import GitManager
 
-def get_kimi_file_messages(file_paths: list, api_key: str) -> list:
-    """Uploads files to Moonshot, extracts text, and formats them as system messages."""
-    from openai import OpenAI
+def get_file_messages(file_paths: list, model_name: str, api_key: str = None) -> list:
+    """Uploads files via native API if supported, or falls back to local text extraction."""
     from pathlib import Path
-    
-    kimi_client = OpenAI(
-        api_key=api_key,
-        base_url="https://api.moonshot.ai/v1"
-    )
-    
     messages = []
-    for file_path in file_paths:
-        if not Path(file_path).exists():
-            continue
-            
-        # 1. Upload file with purpose 'file-extract'
-        file_object = kimi_client.files.create(
-            file=Path(file_path), 
-            purpose="file-extract"
-        )
-        
-        # 2. Extract content
-        file_content = kimi_client.files.content(file_id=file_object.id).text
-        
-        # 3. Append as independent system message
-        messages.append({
-            "role": "system",
-            "content": f"File Content for {file_path}:\n{file_content}"
-        })
-        
+    
+    # 1. Kimi / Moonshot / OpenAI
+    if "kimi" in model_name.lower() or "moonshot" in model_name.lower() or "openai" in model_name.lower():
+        if api_key:
+            try:
+                from openai import OpenAI
+                base_url = "https://api.moonshot.ai/v1" if ("kimi" in model_name.lower() or "moonshot" in model_name.lower()) else None
+                client = OpenAI(api_key=api_key, base_url=base_url) if base_url else OpenAI(api_key=api_key)
+                
+                print(f"  [Info] Uploading files via OpenAI/Moonshot API...")
+                for fp in file_paths:
+                    if not Path(fp).exists(): continue
+                    file_object = client.files.create(file=Path(fp), purpose="file-extract")
+                    file_content = client.files.content(file_id=file_object.id).text
+                    messages.append({"role": "system", "content": f"File Content for {fp}:\n{file_content}"})
+                return messages
+            except Exception as e:
+                print(f"  [Warning] File upload failed: {e}. Falling back to local text reading.")
+        else:
+             print("  [Warning] API key not found. Falling back to local file reading.")
+
+    # 2. Gemini
+    elif "gemini" in model_name.lower():
+        try:
+            import google.generativeai as genai
+            if api_key:
+                genai.configure(api_key=api_key)
+            print(f"  [Info] Uploading files via Gemini API...")
+            for fp in file_paths:
+                if not Path(fp).exists(): continue
+                file_object = genai.upload_file(fp)
+                # LiteLLM expects the file object inside a list for the content
+                messages.append({"role": "system", "content": [file_object, f"File: {fp}"]})
+            return messages
+        except Exception as e:
+            print(f"  [Warning] Gemini file upload failed: {e}. Falling back to local text reading.")
+
+    # 3. Fallback
+    print("  [Info] Reading files locally as fallback...")
+    for fp in file_paths:
+        if Path(fp).exists():
+            with open(fp, 'r') as f:
+                messages.append({"role": "system", "content": f"File Content for {fp}:\n{f.read()}"})
+                
     return messages
 
 def extract_python_code(text: str) -> str:
@@ -244,27 +262,9 @@ Output ONLY the full modified Python code wrapped in python ...  blocks. Do not 
             log_stage(f"Calling LLM: {model_name}")
             
             user_message = {"role": "user", "content": prompt}
-            final_messages = []
-            
-            if "kimi" in model_name.lower() or "moonshot" in model_name.lower():
-                api_key = os.environ.get("MOONSHOT_API_KEY", "")
-                if not api_key:
-                    print("  [Warning] MOONSHOT_API_KEY not found in environment. Falling back to local file reading.")
-                    file_messages = []
-                    for fp in ["train_model.py", "EDA.md", config_path]:
-                        if Path(fp).exists():
-                            file_messages.append({"role": "system", "content": f"File Content for {fp}:\n{read_file(fp)}"})
-                else:
-                    print("  [Info] Uploading files to Moonshot Kimi API...")
-                    file_messages = get_kimi_file_messages(["train_model.py", "EDA.md", config_path], api_key)
-                final_messages = file_messages + [user_message]
-            else:
-                # Fallback to safely reading the files locally and appending them as system messages
-                file_messages = []
-                for fp in ["train_model.py", "EDA.md", config_path]:
-                    if Path(fp).exists():
-                        file_messages.append({"role": "system", "content": f"File Content for {fp}:\n{read_file(fp)}"})
-                final_messages = file_messages + [user_message]
+            api_key = os.environ.get("GEMINI_API_KEY") if "gemini" in model_name.lower() else os.environ.get("MOONSHOT_API_KEY", os.environ.get("OPENAI_API_KEY"))
+            file_messages = get_file_messages(["train_model.py", "EDA.md", config_path], model_name, api_key)
+            final_messages = file_messages + [user_message]
 
             completion_kwargs = {
                 "model": model_name,

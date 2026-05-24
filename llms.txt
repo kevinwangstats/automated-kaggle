@@ -22,8 +22,8 @@ Before proposing code edits, you MUST read and strictly adhere to the instructio
 - It triggers `eda_engine.py` to generate `EDA.md`.
 - `baseline_engine.py` runs basic models (XGBoost, LightGBM, CatBoost, H2O AutoML) via K-Fold CV to establish initial performance.
 - Crucially, `baseline_engine.py` then writes a `train_model.py` template that ensembles the dynamically loaded models from `models_registry.yaml` using a scikit-learn `Pipeline`.
-- `agent_loop.py` takes control. It reads `EDA.md` and the current `train_model.py`.
-- The agent loop calls `litellm` to rewrite `train_model.py` to optimize the pipeline.
+- `agent_loop.py` takes control. It leverages a Multi-Message architecture with **native file uploads** (Gemini API or Moonshot/OpenAI API) to inject `EDA.md` and `train_model.py` directly into the system context, preventing prompt bloat.
+- The LLM rewrites `train_model.py` to optimize the pipeline.
 - The new script is executed in an isolated `subprocess.run` with a strict timeout.
 - If the script fails, the `RuntimeError` or `TimeoutExpired` is captured and fed *back* into the next iteration's prompt.
 - If the CV score improves, the git branch is merged.
