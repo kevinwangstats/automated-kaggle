@@ -38,7 +38,7 @@ iterations: 1
 timeout: 600
 
 # Point LiteLLM to the local Ollama instance running on the CI server
-model: ollama/qwen2.5:0.5b
+model: ollama/qwen2.5-coder:1.5b
 
 # The sampling temperature for the LLM
 temperature: 0
