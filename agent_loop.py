@@ -77,9 +77,14 @@ def extract_python_code(text: str) -> str:
     # Try to extract from markdown python block
     match = re.search(r'```python\n(.*?)\n```', text, re.DOTALL)
     if match:
-        return match.group(1)
-    # If no markdown block, return the whole text assuming it's pure python
-    return text
+        code = match.group(1).strip()
+    else:
+        # If no markdown block, return the whole text assuming it's pure python
+        code = text.strip()
+        
+    if not code:
+        raise ValueError("LLM generated an empty response or no valid Python code could be extracted.")
+    return code
 
 def read_file(filepath: str) -> str:
     with open(filepath, 'r') as f:
@@ -194,6 +199,8 @@ def run_agent_loop(
     
     start_iteration = len(history) + 1
     end_iteration = start_iteration + max_iterations
+    
+    failures_in_session = 0
     
     for i in range(start_iteration, end_iteration):
         log_stage(f"Iteration {i}")
@@ -403,6 +410,7 @@ Output ONLY the full modified Python code wrapped in python ...  blocks. Do not 
                 
         except Exception as e:
             log_error(f"Execution failed for iteration {i}", e)
+            failures_in_session += 1
             history.append({
                 "iteration": len(history)+1,
                 "commit": None,
@@ -414,6 +422,9 @@ Output ONLY the full modified Python code wrapped in python ...  blocks. Do not 
             
         with open(history_path, "w") as f:
             json.dump(history, f, indent=2)
+
+    if max_iterations > 0 and failures_in_session == max_iterations:
+        raise RuntimeError(f"All {max_iterations} agent iterations failed during this session. See logs for details.")
 
     log_stage("Agentic Loop Finished")
     log_metric("Final Best Score", current_best_score)
