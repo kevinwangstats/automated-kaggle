@@ -118,7 +118,10 @@ def run_training_script(script_path="train_model.py", timeout: int = 600, config
         raise RuntimeError(f"Script Execution Timed Out after {timeout} seconds.")
     
     if result.returncode != 0:
-        raise RuntimeError(f"Script Execution Failed:\n{result.stderr}")
+        error_output = result.stderr
+        if len(error_output) > 1500:
+            error_output = "...[TRUNCATED]...\n" + error_output[-1500:]
+        raise RuntimeError(f"Script Execution Failed:\n{error_output}")
         
     # Parse final score from metrics.json
     if not metrics_path.exists():
