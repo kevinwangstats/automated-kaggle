@@ -5,9 +5,9 @@ The main orchestrator for the Agentic AutoML pipeline.
 Execute this script as the primary entry point:
     python main.py --config config.yaml [-y] [--resume]
 """
+import sys
 import argparse
 import yaml
-import sys
 import os
 import pandas as pd
 import json
@@ -373,6 +373,7 @@ def main():
         log_error("Pipeline failed with a critical error", e)
         if 'wandb_enabled' in locals() and wandb_enabled:
             wandb.finish()
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
