@@ -19,6 +19,7 @@ import weave
 import kaggle_ops
 from pathlib import Path
 from litellm import completion
+from litellm.exceptions import Timeout, BadRequestError, AuthenticationError
 from logger import log_stage, log_error, log_metric
 from git_manager import GitManager
 
@@ -293,6 +294,23 @@ Output ONLY the full modified Python code wrapped in python ...  blocks. Do not 
                 print(f"  [Info] Waiting for API response...")
             
             llm_output = call_agent_llm(completion_kwargs)
+        except (BadRequestError, AuthenticationError) as e:
+            log_error("Fatal LLM API Error (Invalid Config or Auth). Terminating loop.", e)
+            break
+        except Timeout as e:
+            log_error("LLM API Call Timed Out", e)
+            if "gemini-2.5-flash" not in model_name:
+                print(f"  [Warning] Temporary fallback to gemini/gemini-2.5-flash due to timeout.")
+                completion_kwargs["model"] = "gemini/gemini-2.5-flash"
+                if "api_base" in completion_kwargs:
+                    del completion_kwargs["api_base"]
+                try:
+                    llm_output = call_agent_llm(completion_kwargs)
+                except Exception as fallback_e:
+                    log_error("Fallback LLM Call also failed", fallback_e)
+                    continue
+            else:
+                continue
         except Exception as e:
             log_error("LLM API Call failed", e)
             if "ollama" in (model_name or "").lower():
@@ -347,8 +365,7 @@ Output ONLY the full modified Python code wrapped in python ...  blocks. Do not 
                     "commit": commit_id,
                     "score": new_score,
                     "improved": True,
-                    "prompt": prompt,
-                    "response": llm_output
+                    "agent_reasoning": llm_summary
                 })
             else:
                 log_stage(f"Score degraded or unchanged. Leaving changes uncommitted in workspace for next iteration to retry.")
@@ -357,8 +374,7 @@ Output ONLY the full modified Python code wrapped in python ...  blocks. Do not 
                     "commit": None,
                     "score": new_score,
                     "improved": False,
-                    "prompt": prompt,
-                    "response": llm_output
+                    "agent_reasoning": llm_summary
                 })
                 
             # Kaggle Submission Logic
@@ -393,8 +409,7 @@ Output ONLY the full modified Python code wrapped in python ...  blocks. Do not 
                 "score": None,
                 "improved": False,
                 "error": str(e),
-                "prompt": prompt,
-                "response": llm_output
+                "agent_reasoning": llm_summary if 'llm_summary' in locals() else "Execution failed before logic extraction"
             })
             
         with open(history_path, "w") as f:
