@@ -13,77 +13,99 @@ import os
 import re
 import argparse
 from pathlib import Path
-from sklearn.model_selection import KFold, cross_val_score
-from sklearn.preprocessing import LabelEncoder, OneHotEncoder
+from sklearn.model_selection import StratifiedKFold, KFold
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler
 from sklearn.compose import ColumnTransformer
-from sklearn.base import clone
 from sklearn.pipeline import Pipeline
-from sklearn.metrics import make_scorer, roc_auc_score, mean_squared_error
-from catboost import CatBoostRegressor, CatBoostClassifier
+from sklearn.metrics import roc_auc_score, mean_squared_error
+from sklearn.ensemble import VotingClassifier, VotingRegressor
+from xgboost import XGBClassifier, XGBRegressor
+from lightgbm import LGBMClassifier, LGBMRegressor
+from catboost import CatBoostClassifier, CatBoostRegressor
+from sklearn.linear_model import RidgeClassifier, Ridge
+from sklearn.base import clone
 from tqdm import tqdm
-from pathlib import Path
+import warnings
+
+warnings.filterwarnings('ignore')
 
 def load_config(config_path="config.yaml"):
     with open(config_path, "r") as f:
-        return yaml.safe_load(f)
+        config = yaml.safe_load(f)
+    repo_root = os.environ.get("REPO_ROOT", os.getcwd())
+    if config.get("dataset_path") and not os.path.isabs(config.get("dataset_path")):
+        config["dataset_path"] = os.path.join(repo_root, config["dataset_path"])
+    if config.get("test_path") and not os.path.isabs(config.get("test_path")):
+        config["test_path"] = os.path.join(repo_root, config["test_path"])
+    return config
 
 def train_and_evaluate(config_path="config.yaml", output_dir="."):
-    # 1. Load Configuration & Data
+    # 1. Load Data
     config = load_config(config_path)
     dataset_path = config.get("dataset_path")
     target_col = config.get("target_col")
     test_path = config.get("test_path")
 
-    if not Path(dataset_path).exists():
-        raise FileNotFoundError(f"Dataset not found at {dataset_path}")
-
     df = pd.read_csv(dataset_path)
-    
-    # Basic Preprocessing
     df = df.dropna(subset=[target_col])
     y_raw = df[target_col]
     X = df.drop(columns=[target_col])
     
-    # Clean column names
+    # Clean feature names
     X.columns = [re.sub(r'[^\w\s]', '', col).replace(' ', '_') for col in X.columns]
     
+    # 2. Determine Task & Encode Target
     task = 'classification' if y_raw.nunique() < 20 else 'regression'
     if task == 'classification':
         le_y = LabelEncoder()
         y = le_y.fit_transform(y_raw)
     else:
-        y = y_raw
+        y = y_raw.values
 
-    # 2. Define Preprocessing Pipeline
-    categorical_features = X.select_dtypes(include=['object', 'category']).columns
-    numerical_features = X.select_dtypes(include=np.number).columns
+    # 3. Build Preprocessor
+    categorical_features = X.select_dtypes(include=['object', 'category']).columns.tolist()
+    numerical_features = X.select_dtypes(include=np.number).columns.tolist()
 
     preprocessor = ColumnTransformer(
         transformers=[
-            ('num', 'passthrough', numerical_features),
+            ('num', StandardScaler(), numerical_features),
             ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), categorical_features)
         ],
         remainder='passthrough'
     )
 
-    # 3. Model Initialization
+    # 4. Initialize Models (Minimal Parameters)
     if task == 'classification':
-        model = CatBoostClassifier(random_state=42, verbose=0)
+        estimators = [
+            ('xgb', XGBClassifier(random_state=42, n_jobs=-1, eval_metric='logloss')),
+            ('lgb', LGBMClassifier(random_state=42, n_jobs=-1, verbose=-1)),
+            ('cat', CatBoostClassifier(random_state=42, verbose=0, thread_count=-1)),
+            ('ridge', RidgeClassifier(random_state=42))
+        ]
+        # Soft voting requires predict_proba, but RidgeClassifier doesn't support it natively.
+        # We drop ridge for soft voting, or use hard voting. Soft is better for AUC.
+        ensemble_estimators = [e for e in estimators if e[0] != 'ridge']
+        ensemble = VotingClassifier(estimators=ensemble_estimators, voting='soft')
+        cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+        scoring_fn = roc_auc_score
     else:
-        model = CatBoostRegressor(random_state=42, verbose=0)
+        estimators = [
+            ('xgb', XGBRegressor(random_state=42, n_jobs=-1)),
+            ('lgb', LGBMRegressor(random_state=42, n_jobs=-1, verbose=-1)),
+            ('cat', CatBoostRegressor(random_state=42, verbose=0, thread_count=-1)),
+            ('ridge', Ridge(random_state=42))
+        ]
+        ensemble = VotingRegressor(estimators=estimators)
+        cv = KFold(n_splits=5, shuffle=True, random_state=42)
+        scoring_fn = mean_squared_error
 
-    # 4. Create Full Pipeline
     pipeline = Pipeline(steps=[('preprocessor', preprocessor),
-                               ('model', model)])
+                               ('model', ensemble)])
     
-    # 5. Cross Validation
-    cv = KFold(n_splits=5, shuffle=True, random_state=42)
-    scoring = 'roc_auc' if task == 'classification' else 'neg_mean_squared_error'
-    
-    print(f"Running Cross-Validation (folds=5)...")
+    # 5. Cross-Validation
+    print("Running 5-Fold CV...")
     scores = []
-    # Manual loop for progress
-    for train_idx, val_idx in tqdm(list(cv.split(X, y)), desc="CV Progress"):
+    for train_idx, val_idx in tqdm(list(cv.split(X, y)), desc="CV"):
         X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
         y_train, y_val = y[train_idx], y[val_idx]
         
@@ -91,35 +113,27 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         fold_pipeline.fit(X_train, y_train)
         
         if task == 'classification':
-            if scoring == 'roc_auc':
-                from sklearn.metrics import roc_auc_score
-                y_pred = fold_pipeline.predict_proba(X_val)[:, 1]
-                score = roc_auc_score(y_val, y_pred)
-            else:
-                from sklearn.metrics import get_scorer
-                score = get_scorer(scoring)(fold_pipeline, X_val, y_val)
+            y_pred = fold_pipeline.predict_proba(X_val)[:, 1]
+            score = scoring_fn(y_val, y_pred)
         else:
-            from sklearn.metrics import get_scorer
-            score = get_scorer(scoring)(fold_pipeline, X_val, y_val)
+            y_pred = fold_pipeline.predict(X_val)
+            score = -scoring_fn(y_val, y_pred)
         scores.append(score)
 
-    final_score = np.mean(scores)
-    print(f"FINAL_CV_SCORE: {final_score:.4f}")
+    final_score = float(np.mean(scores))
+    print(f"Final CV Score: {final_score:.4f}")
     
-    out_dir = Path(output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    with open(out_dir / "metrics.json", "w") as f:
+    os.makedirs(output_dir, exist_ok=True)
+    with open(os.path.join(output_dir, "metrics.json"), "w") as f:
         json.dump({"cv_score": final_score}, f)
 
     # 6. Generate Submission
-    if test_path and Path(test_path).exists():
+    if test_path and os.path.exists(test_path):
         print("Generating submission...")
         pipeline.fit(X, y)
         test_df = pd.read_csv(test_path)
         
-        # Ensure test columns match train columns before preprocessing
         test_X = test_df[X.columns.intersection(test_df.columns)]
-        # Reorder to match X columns
         test_X = test_X.reindex(columns=X.columns, fill_value=0)
 
         if task == 'classification':
@@ -131,8 +145,7 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         if len(test_df.columns) > 0:
              submission[test_df.columns[0]] = test_df.iloc[:, 0]
         submission[target_col] = preds
-        submission.to_csv(out_dir / "raw_submission.csv", index=False)
-        print("Saved raw_submission.csv")
+        submission.to_csv(os.path.join(output_dir, "raw_submission.csv"), index=False)
 
     return final_score
 

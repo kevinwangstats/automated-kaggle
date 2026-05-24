@@ -282,7 +282,7 @@ Output ONLY the full modified Python code wrapped in python ...  blocks. Do not 
                 "model": model_name,
                 "messages": final_messages,
                 "temperature": temperature,
-                "request_timeout": 120  # Ensure LLM call doesn't hang indefinitely
+                "request_timeout": 300  # Ensure LLM call doesn't hang indefinitely
             }
             # Ollama requires an api_base pointing to the local server
             if model_name.startswith("ollama"):

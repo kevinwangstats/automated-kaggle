@@ -1,17 +1,17 @@
 models:
   xgb:
     imports: "from xgboost import XGBClassifier, XGBRegressor"
-    classifier: "XGBClassifier(random_state=42)"
-    regressor: "XGBRegressor(random_state=42)"
+    classifier: "XGBClassifier(random_state=42, n_jobs=-1)"
+    regressor: "XGBRegressor(random_state=42, n_jobs=-1)"
   lgb:
     imports: "from lightgbm import LGBMClassifier, LGBMRegressor"
-    classifier: "LGBMClassifier(random_state=42, verbose=-1)"
-    regressor: "LGBMRegressor(random_state=42, verbose=-1)"
+    classifier: "LGBMClassifier(random_state=42, verbose=-1, n_jobs=-1)"
+    regressor: "LGBMRegressor(random_state=42, verbose=-1, n_jobs=-1)"
   cat:
     imports: "from catboost import CatBoostClassifier, CatBoostRegressor"
-    classifier: "CatBoostClassifier(random_state=42, verbose=0)"
-    regressor: "CatBoostRegressor(random_state=42, verbose=0)"
-  hist:
-    imports: "from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor"
-    classifier: "HistGradientBoostingClassifier(random_state=42)"
-    regressor: "HistGradientBoostingRegressor(random_state=42)"
+    classifier: "CatBoostClassifier(random_state=42, verbose=0, thread_count=-1)"
+    regressor: "CatBoostRegressor(random_state=42, verbose=0, thread_count=-1)"
+  ridge:
+    imports: "from sklearn.linear_model import RidgeClassifier, Ridge"
+    classifier: "RidgeClassifier(random_state=42)"
+    regressor: "Ridge(random_state=42)"
