@@ -12,3 +12,5 @@ PyYAML>=6.0
 kaggle>=1.6.0
 wandb>=0.16.0
 tqdm>=4.66.0
+openai>=1.10
+weave>=0.52

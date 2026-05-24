@@ -15,6 +15,7 @@ import yaml
 import urllib.request
 import urllib.error
 import wandb
+import weave
 import kaggle_ops
 from pathlib import Path
 from litellm import completion
@@ -64,6 +65,12 @@ def extract_python_code(text: str) -> str:
 def read_file(filepath: str) -> str:
     with open(filepath, 'r') as f:
         return f.read()
+
+@weave.op()
+def call_agent_llm(completion_kwargs: dict) -> str:
+    """Wrapper for LLM completion to enable Weave tracing."""
+    response = completion(**completion_kwargs)
+    return response.choices[0].message.content
 
 def run_training_script(script_path="train_model.py", timeout: int = 600, config_path="config.yaml", workspace_mgr=None):
     # Ensure no stale metrics exist
@@ -132,6 +139,13 @@ def run_agent_loop(
     if available_models is None:
         available_models = []
     log_stage("Starting Agentic Loop")
+    
+    if wandb_enabled:
+        weave_project = wandb_project if wandb_project else "agentic-automl"
+        if wandb_entity:
+            weave_project = f"{wandb_entity}/{weave_project}"
+        weave.init(weave_project)
+        
     current_best_score = base_score
     history = []
     
@@ -275,8 +289,7 @@ Output ONLY the full modified Python code wrapped in python ...  blocks. Do not 
                 print(f"  [Info] Using remote API ({provider}). Please ensure your {provider.upper()}_API_KEY is set if you haven't.")
                 print(f"  [Info] Waiting for API response...")
             
-            response = completion(**completion_kwargs)
-            llm_output = response.choices[0].message.content
+            llm_output = call_agent_llm(completion_kwargs)
         except Exception as e:
             log_error("LLM API Call failed", e)
             if "ollama" in (model_name or "").lower():
