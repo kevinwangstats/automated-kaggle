@@ -131,7 +131,8 @@ def run_training_script(script_path="train_model.py", timeout: int = 600, config
         
     # Parse final score from metrics.json
     if not metrics_path.exists():
-        raise ValueError(f"Could not find metrics.json after script execution. Output was:\n{result.stdout}\n{result.stderr}")
+        script_content = read_file(script_path) if Path(script_path).exists() else "File not found."
+        raise ValueError(f"Could not find metrics.json after script execution. The script may not have executed correctly or did not write to metrics.json.\n\nScript content was:\n{script_content}\n\nOutput was:\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}")
         
     try:
         with open(metrics_path, "r") as f:

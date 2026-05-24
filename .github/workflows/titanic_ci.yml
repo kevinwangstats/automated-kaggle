@@ -41,8 +41,8 @@ jobs:
         ollama serve &
         # Give the server a few seconds to initialize
         sleep 5
-        # Pull a 0.5B parameter model. It downloads in seconds and runs on CPU.
-        ollama pull qwen2.5:0.5b
+        # Pull a 1.5B coder model for better reliability
+        ollama pull qwen2.5-coder:1.5b
 
     - name: Run Pipeline (Baseline + Agent Loop)
       run: |
