@@ -12,6 +12,14 @@
 #   3. Run: python main.py --config tests/titanic_config.yaml -y
 # ---------------------------------------------------------
 
+# --- CORE REQUIRED SETTINGS ---
+
+# workspace_root: The directory where ephemeral pipeline files are isolated.
+workspace_root: ".workspaces"
+
+# run_mode: Determines behavior if previous state is detected
+run_mode: "prompt"
+
 dataset_path: "data/titanic/train.csv"
 target_col: "Survived"
 test_path: "data/titanic/test.csv"
@@ -23,17 +31,28 @@ metric: "roc_auc"
 # Titanic requires discrete class predictions (0 or 1), not probabilities
 pred_type: "0/1"
 
-# Set to 0 to skip the LLM agent loop (baseline-only run)
-iterations: 0
+# Set to 1 to test one full cycle of the LLM agent loop
+iterations: 1
 
-# Generous timeout for CI runners
-timeout: 60
+# Generous timeout because CPU inference on GitHub runners is slower
+timeout: 600
 
-# LLM model to use
-model: ollama/qwen3.5:2b
-# model: gemini/gemini-2.5-flash-lite
+# Point LiteLLM to the local Ollama instance running on the CI server
+model: ollama/qwen2.5:0.5b
+
+# The sampling temperature for the LLM
+temperature: 0
+
+# Limits the number of rows loaded into memory
+max_rows: ~
 
 # Weights & Biases configuration
 wandb:
   enabled: false
   entity: "kevinwangstats"
+
+# Controls automated Kaggle submissions
+auto_kaggle_submit: "never"
+
+# The URL where your local Ollama instance is running
+ollama_base_url: ~
