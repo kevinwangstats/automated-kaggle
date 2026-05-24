@@ -11,8 +11,23 @@ import argparse
 import json
 import os
 import re
-import warnings
+import argparse
 from pathlib import Path
+from sklearn.model_selection import StratifiedKFold, KFold
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import roc_auc_score, mean_squared_error
+from sklearn.ensemble import VotingClassifier, VotingRegressor
+from xgboost import XGBClassifier, XGBRegressor
+from lightgbm import LGBMClassifier, LGBMRegressor
+from catboost import CatBoostClassifier, CatBoostRegressor
+from sklearn.linear_model import RidgeClassifier, Ridge
+from sklearn.base import clone
+from tqdm import tqdm
+import warnings
+
+warnings.filterwarnings('ignore')
 
 import numpy as np
 import pandas as pd
@@ -62,9 +77,10 @@ def load_config(config_path="config.yaml"):
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
     repo_root = os.environ.get("REPO_ROOT", os.getcwd())
-    for key in ["dataset_path", "test_path"]:
-        if config.get(key) and not os.path.isabs(config.get(key)):
-            config[key] = os.path.join(repo_root, config.get(key))
+    if config.get("dataset_path") and not os.path.isabs(config.get("dataset_path")):
+        config["dataset_path"] = os.path.join(repo_root, config["dataset_path"])
+    if config.get("test_path") and not os.path.isabs(config.get("test_path")):
+        config["test_path"] = os.path.join(repo_root, config["test_path"])
     return config
 
 
@@ -504,108 +520,102 @@ def get_model_candidates(preprocessor, random_state=42):
 # Main training & evaluation
 # ----------------------------------------------------------------------
 def train_and_evaluate(config_path="config.yaml", output_dir="."):
+    # 1. Load Data
     config = load_config(config_path)
     dataset_path = config.get("dataset_path")
     target_col = config.get("target_col")
     test_path = config.get("test_path")
     nrows = config.get("nrows", None)
 
-    if not dataset_path or not target_col:
-        raise ValueError("dataset_path and target_col must be in config.")
+    df = pd.read_csv(dataset_path)
+    df = df.dropna(subset=[target_col])
+    y_raw = df[target_col]
+    X = df.drop(columns=[target_col])
+    
+    # Clean feature names
+    X.columns = [re.sub(r'[^\w\s]', '', col).replace(' ', '_') for col in X.columns]
+    
+    # 2. Determine Task & Encode Target
+    task = 'classification' if y_raw.nunique() < 20 else 'regression'
+    if task == 'classification':
+        le_y = LabelEncoder()
+        y = le_y.fit_transform(y_raw)
+    else:
+        y = y_raw.values
 
-    # ---- Load data --------------------------------------------------------
-    df = pd.read_csv(dataset_path, nrows=nrows)
-    if target_col not in df.columns:
-        raise ValueError(f"Target column '{target_col}' not found.")
-
-    df_train = df.dropna(subset=[target_col])
-    y_raw = df_train[target_col]
-    X_raw = df_train.drop(columns=[target_col])
-
-    # sanitize column names
-    X_raw.columns = sanitize_columns(X_raw.columns)
-
-    # ---- ID column detection & removal -----------------------------------
-    id_col_name = None
-    potential_ids = ["passengerid", "id", "index"]
-    first_col = X_raw.columns[0]
-    if (
-        first_col.lower() in potential_ids
-        and X_raw[first_col].nunique() == len(X_raw)
-    ):
-        id_col_name = first_col
-        X_raw = X_raw.drop(columns=[id_col_name])
-
-    # ---- Feature engineering ----------------------------------------------
-    X = engineer_features(X_raw)
-    X.columns = sanitize_columns(X.columns)
-
-    # ---- Target encoding --------------------------------------------------
-    le = LabelEncoder()
-    y = le.fit_transform(y_raw)
-
-    # ---- Column categorisation & preprocessor ----------------------------
-    categorical_features = list(
-        X.select_dtypes(include=["object", "category"]).columns
-    )
-    numerical_features = list(X.select_dtypes(include=np.number).columns)
-
-    # Prefer TargetEncoder, fallback to OneHotEncoder
-    try:
-        cat_transformer = TargetEncoder(target_type="binary", random_state=42, smooth=10)
-        print("Using TargetEncoder for categorical features (smooth=10).")
-    except Exception:
-        cat_transformer = OneHotEncoder(
-            handle_unknown="ignore", sparse_output=False
-        )
-        print("Falling back to OneHotEncoder.")
+    # 3. Build Preprocessor
+    categorical_features = X.select_dtypes(include=['object', 'category']).columns.tolist()
+    numerical_features = X.select_dtypes(include=np.number).columns.tolist()
 
     preprocessor = ColumnTransformer(
         transformers=[
-            ("num", StandardScaler(), numerical_features),
-            ("cat", cat_transformer, categorical_features),
+            ('num', StandardScaler(), numerical_features),
+            ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), categorical_features)
         ],
         remainder="passthrough",
     )
 
-    # ---- Candidate models -------------------------------------------------
-    print("Assembling candidate models ...")
-    candidates = get_model_candidates(preprocessor, random_state=42)
+    # 4. Initialize Models (Minimal Parameters)
+    if task == 'classification':
+        estimators = [
+            ('xgb', XGBClassifier(random_state=42, n_jobs=-1, eval_metric='logloss')),
+            ('lgb', LGBMClassifier(random_state=42, n_jobs=-1, verbose=-1)),
+            ('cat', CatBoostClassifier(random_state=42, verbose=0, thread_count=-1)),
+            ('ridge', RidgeClassifier(random_state=42))
+        ]
+        # Soft voting requires predict_proba, but RidgeClassifier doesn't support it natively.
+        # We drop ridge for soft voting, or use hard voting. Soft is better for AUC.
+        ensemble_estimators = [e for e in estimators if e[0] != 'ridge']
+        ensemble = VotingClassifier(estimators=ensemble_estimators, voting='soft')
+        cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+        scoring_fn = roc_auc_score
+    else:
+        estimators = [
+            ('xgb', XGBRegressor(random_state=42, n_jobs=-1)),
+            ('lgb', LGBMRegressor(random_state=42, n_jobs=-1, verbose=-1)),
+            ('cat', CatBoostRegressor(random_state=42, verbose=0, thread_count=-1)),
+            ('ridge', Ridge(random_state=42))
+        ]
+        ensemble = VotingRegressor(estimators=estimators)
+        cv = KFold(n_splits=5, shuffle=True, random_state=42)
+        scoring_fn = mean_squared_error
 
-    # ---- Evaluate all candidates via 10‑fold CV ----------------------------
-    outer_cv = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
-    best_model = None
-    best_score = -1.0
-    best_name = ""
+    pipeline = Pipeline(steps=[('preprocessor', preprocessor),
+                               ('model', ensemble)])
+    
+    # 5. Cross-Validation
+    print("Running 5-Fold CV...")
+    scores = []
+    for train_idx, val_idx in tqdm(list(cv.split(X, y)), desc="CV"):
+        X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+        y_train, y_val = y[train_idx], y[val_idx]
+        
+        fold_pipeline = clone(pipeline)
+        fold_pipeline.fit(X_train, y_train)
+        
+        if task == 'classification':
+            y_pred = fold_pipeline.predict_proba(X_val)[:, 1]
+            score = scoring_fn(y_val, y_pred)
+        else:
+            y_pred = fold_pipeline.predict(X_val)
+            score = -scoring_fn(y_val, y_pred)
+        scores.append(score)
 
-    for name, pipeline in candidates:
-        try:
-            scores = cross_val_score(
-                pipeline, X, y, cv=outer_cv, scoring="roc_auc", n_jobs=-1
-            )
-            mean_score = float(np.mean(scores))
-            print(f"Model {name:20s}  ->  CV AUC = {mean_score:.6f}")
-            if mean_score > best_score:
-                best_score = mean_score
-                best_name = name
-                best_model = pipeline
-        except Exception as e:
-            print(f"Model {name} failed: {e}")
+    final_score = float(np.mean(scores))
+    print(f"Final CV Score: {final_score:.4f}")
+    
+    os.makedirs(output_dir, exist_ok=True)
+    with open(os.path.join(output_dir, "metrics.json"), "w") as f:
+        json.dump({"cv_score": final_score}, f)
 
-    print(f"\nBest model: {best_name} with CV AUC = {best_score:.6f}")
-
-    # ---- Save metrics -----------------------------------------------------
-    out_dir = Path(output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    with open(out_dir / "metrics.json", "w") as f:
-        json.dump({"cv_score": best_score}, f)
-    print(f"CV Score written to metrics.json: {best_score:.6f}")
-
-    # ---- Generate submission ----------------------------------------------
-    if test_path and os.path.exists(test_path) and best_model is not None:
-        print("Generating submission with best model ...")
-        # Refit best pipeline on full training data
-        best_model.fit(X, y)
+    # 6. Generate Submission
+    if test_path and os.path.exists(test_path):
+        print("Generating submission...")
+        pipeline.fit(X, y)
+        test_df = pd.read_csv(test_path)
+        
+        test_X = test_df[X.columns.intersection(test_df.columns)]
+        test_X = test_X.reindex(columns=X.columns, fill_value=0)
 
         # Process test set
         test_df_raw = pd.read_csv(test_path, nrows=nrows)
@@ -641,8 +651,7 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
 
         submission = pd.DataFrame({test_id_col_name: test_id_series.values})
         submission[target_col] = preds
-        submission.to_csv(out_dir / "raw_submission.csv", index=False)
-        print("Saved raw_submission.csv")
+        submission.to_csv(os.path.join(output_dir, "raw_submission.csv"), index=False)
 
     return best_score
 
@@ -662,6 +671,4 @@ if __name__ == "__main__":
         help="Directory to save outputs (metrics.json, raw_submission.csv)",
     )
     args = parser.parse_args()
-
-    os.makedirs(args.output_dir, exist_ok=True)
     train_and_evaluate(args.config, args.output_dir)
