@@ -21,7 +21,7 @@ example_submission: "data/titanic/gender_submission.csv"
 metric: "roc_auc"
 
 # Titanic requires discrete class predictions (0 or 1), not probabilities
-pred_prob: false
+pred_type: "0/1"
 
 # Set to 0 to skip the LLM agent loop (baseline-only run)
 iterations: 0
