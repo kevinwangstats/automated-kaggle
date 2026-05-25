@@ -228,4 +228,7 @@ wandb/*
 catboost_info/*
 settings.json
 wandb_run_id.txt
+
+# Likely junk files when train_model.py is executed on its own, that should not be git-tracked
 raw_submission.csv
+metrics.json

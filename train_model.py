@@ -18,26 +18,13 @@ from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import roc_auc_score, mean_squared_error
-from sklearn.ensemble import VotingClassifier, VotingRegressor
-from xgboost import XGBClassifier, XGBRegressor
 from lightgbm import LGBMClassifier, LGBMRegressor
-from catboost import CatBoostClassifier, CatBoostRegressor
-from sklearn.linear_model import RidgeClassifier, Ridge
 from sklearn.base import clone
 from tqdm import tqdm
 import warnings
+from utils import load_config, clean_column_names
 
 warnings.filterwarnings('ignore')
-
-def load_config(config_path="config.yaml"):
-    with open(config_path, "r") as f:
-        config = yaml.safe_load(f)
-    repo_root = os.environ.get("REPO_ROOT", os.getcwd())
-    if config.get("dataset_path") and not os.path.isabs(config.get("dataset_path")):
-        config["dataset_path"] = os.path.join(repo_root, config["dataset_path"])
-    if config.get("test_path") and not os.path.isabs(config.get("test_path")):
-        config["test_path"] = os.path.join(repo_root, config["test_path"])
-    return config
 
 def train_and_evaluate(config_path="config.yaml", output_dir="."):
     # 1. Load Data
@@ -51,8 +38,8 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     y_raw = df[target_col]
     X = df.drop(columns=[target_col])
     
-    # Clean feature names
-    X.columns = [re.sub(r'[^\w\s]', '', col).replace(' ', '_') for col in X.columns]
+    # Clean feature names (fixes issues with LightGBM column names)
+    X = clean_column_names(X)
     
     # 2. Determine Task & Encode Target
     task = 'classification' if y_raw.nunique() < 20 else 'regression'
@@ -74,33 +61,18 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         remainder='passthrough'
     )
 
-    # 4. Initialize Models (Minimal Parameters)
+    # 4. Initialize Model (Minimal Parameters)
     if task == 'classification':
-        estimators = [
-            ('xgb', XGBClassifier(random_state=42, n_jobs=-1, eval_metric='logloss')),
-            ('lgb', LGBMClassifier(random_state=42, n_jobs=-1, verbose=-1)),
-            ('cat', CatBoostClassifier(random_state=42, verbose=0, thread_count=-1)),
-            ('ridge', RidgeClassifier(random_state=42))
-        ]
-        # Soft voting requires predict_proba, but RidgeClassifier doesn't support it natively.
-        # We drop ridge for soft voting, or use hard voting. Soft is better for AUC.
-        ensemble_estimators = [e for e in estimators if e[0] != 'ridge']
-        ensemble = VotingClassifier(estimators=ensemble_estimators, voting='soft')
+        model = LGBMClassifier(random_state=42, n_jobs=-1, verbose=-1)
         cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
         scoring_fn = roc_auc_score
     else:
-        estimators = [
-            ('xgb', XGBRegressor(random_state=42, n_jobs=-1)),
-            ('lgb', LGBMRegressor(random_state=42, n_jobs=-1, verbose=-1)),
-            ('cat', CatBoostRegressor(random_state=42, verbose=0, thread_count=-1)),
-            ('ridge', Ridge(random_state=42))
-        ]
-        ensemble = VotingRegressor(estimators=estimators)
+        model = LGBMRegressor(random_state=42, n_jobs=-1, verbose=-1)
         cv = KFold(n_splits=5, shuffle=True, random_state=42)
         scoring_fn = mean_squared_error
 
     pipeline = Pipeline(steps=[('preprocessor', preprocessor),
-                               ('model', ensemble)])
+                               ('model', model)])
     
     # 5. Cross-Validation
     print("Running 5-Fold CV...")
