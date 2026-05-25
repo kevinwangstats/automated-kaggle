@@ -48,7 +48,7 @@ jobs:
         echo "Ollama is running!"
         
         # Explicitly pull the exact micro-model used in titanic_ci_config.yaml
-        ollama pull qwen2.5-coder:0.5b
+        ollama pull qwen2.5-coder:1.5b
 
     - name: Run Pipeline (Baseline + Agent Loop)
       run: |

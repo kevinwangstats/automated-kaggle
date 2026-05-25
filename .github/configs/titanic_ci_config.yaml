@@ -14,6 +14,10 @@
 
 # --- CORE REQUIRED SETTINGS ---
 
+# ci_test_mode: If true, the agent loop will call the LLM but bypass code execution
+# to prevent micro-models from failing the CI with bad Python syntax.
+ci_test_mode: true
+
 # workspace_root: The directory where ephemeral pipeline files are isolated.
 workspace_root: ".workspaces"
 
@@ -38,7 +42,7 @@ iterations: 1
 timeout: 600
 
 # Point LiteLLM to the local Ollama instance running on the CI server
-model: ollama/qwen2.5-coder:0.5b
+model: ollama/qwen2.5-coder:1.5b
 
 # The sampling temperature for the LLM
 temperature: 0

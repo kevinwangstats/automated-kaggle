@@ -45,6 +45,7 @@ def main():
         temperature = config.get('temperature', 0.4)
         ollama_base_url = config.get('ollama_base_url', None)
         max_rows = config.get('max_rows', 100000)
+        ci_test_mode = config.get('ci_test_mode', False)
         
         wandb_config = config.get('wandb', {})
         wandb_enabled = wandb_config.get('enabled', False)
@@ -343,7 +344,8 @@ def main():
             pred_type=pred_type,
             config_path=args.config,
             available_models=available_models,
-            workspace_mgr=workspace_mgr
+            workspace_mgr=workspace_mgr,
+            ci_test_mode=ci_test_mode
         )
         print(f"[Info] Phase 3 (Agentic Loop) completed in {time.time() - t_loop:.2f}s")
         

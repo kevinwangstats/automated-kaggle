@@ -14,6 +14,7 @@ from tqdm import tqdm
 from sklearn.model_selection import KFold, cross_val_score, cross_val_predict
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
 from sklearn.base import clone
 from sklearn.metrics import roc_auc_score, get_scorer, accuracy_score, f1_score, confusion_matrix
 from logger import log_stage, log_metric, log_error, suppress_stdout_stderr
