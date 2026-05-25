@@ -30,16 +30,16 @@ def create_template_script(dataset_path: str, target_col: str, best_model_name: 
     except Exception:
         registry = {'models': {}}
 
-    imports_str = "\n".join([cfg["imports"] for cfg in registry['models'].values()])
-
-    init_block = "models = []\n"
-    for name, cfg in registry['models'].items():
-        init_block += f"    try:\n"
-        init_block += f"        if task == 'classification':\n"
-        init_block += f"            models.append(('{name}', {cfg['classifier']}))\n"
-        init_block += f"        else:\n"
-        init_block += f"            models.append(('{name}', {cfg['regressor']}))\n"
-        init_block += f"    except Exception: pass\n"
+    if best_model_name in registry['models']:
+        model_cfg = registry['models'][best_model_name]
+        imports_str = model_cfg["imports"]
+        init_block = f"if task == 'classification':\n"
+        init_block += f"        model = {model_cfg['classifier']}\n"
+        init_block += f"    else:\n"
+        init_block += f"        model = {model_cfg['regressor']}\n"
+    else:
+        imports_str = "from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor"
+        init_block = "if task == 'classification':\n        model = RandomForestClassifier(random_state=42)\n    else:\n        model = RandomForestRegressor(random_state=42)\n"
 
     metric_str = f"'{custom_metric}'" if custom_metric else "('roc_auc' if task == 'classification' else 'neg_mean_squared_error')"
     nrows_str = f"nrows={max_rows}" if max_rows is not None else "nrows=None"
@@ -56,7 +56,6 @@ from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import make_scorer, roc_auc_score, mean_squared_error
-from sklearn.ensemble import VotingClassifier, VotingRegressor
 {imports_str}
 from pathlib import Path
 from tqdm import tqdm
@@ -111,17 +110,12 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         remainder='passthrough'
     )
 
-    # 3. Model Initialization (Multi-Model Ensemble)
+    # 3. Model Initialization
     {init_block}
-    if not models: raise RuntimeError("No models could be initialized.")
-    if task == 'classification':
-        ensemble = VotingClassifier(estimators=models, voting='soft')
-    else:
-        ensemble = VotingRegressor(estimators=models)
 
     # 4. Create Full Pipeline
     pipeline = Pipeline(steps=[('preprocessor', preprocessor),
-                               ('classifier', ensemble)])
+                               ('classifier', model)])
     
     # 5. Cross Validation
     cv = KFold(n_splits=5, shuffle=True, random_state=42)

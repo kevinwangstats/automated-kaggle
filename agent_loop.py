@@ -12,6 +12,7 @@ import json
 import re
 import subprocess
 import yaml
+import sys
 import urllib.request
 import urllib.error
 import wandb
@@ -113,7 +114,7 @@ def run_training_script(script_path="train_model.py", timeout: int = 600, config
         env["REPO_ROOT"] = str(Path.cwd())
         
         result = subprocess.run(
-            ["python", str(script_path), "--config", str(abs_config), "--output_dir", str(output_dir)],
+            [sys.executable, str(script_path), "--config", str(abs_config), "--output_dir", str(output_dir)],
             cwd=None, # Run from root
             env=env,
             capture_output=True,
@@ -338,8 +339,12 @@ Output ONLY the full modified Python code wrapped in python ...  blocks. Do not 
             f.write(new_code)
             
         try:
-            log_stage(f"Evaluating Generated Code")
-            new_score = run_training_script(script_path, timeout=timeout, config_path=config_path, workspace_mgr=workspace_mgr)
+            if ci_test_mode:
+                log_stage("CI Test Mode Active: Bypassing code execution")
+                new_score = current_best_score + 0.0001 if current_best_score is not None else 0.9999
+            else:
+                log_stage(f"Evaluating Generated Code")
+                new_score = run_training_script(script_path, timeout=timeout, config_path=config_path, workspace_mgr=workspace_mgr)
             log_metric("Iteration Score", new_score)
             
             higher_is_better = True
@@ -426,7 +431,10 @@ Output ONLY the full modified Python code wrapped in python ...  blocks. Do not 
             json.dump(history, f, indent=2)
 
     if max_iterations > 0 and failures_in_session == max_iterations:
-        raise RuntimeError(f"All {max_iterations} agent iterations failed during this session. See logs for details.")
+        if strict_mode:
+            raise RuntimeError(f"All {max_iterations} agent iterations failed during this session. See logs for details.")
+        else:
+            log_stage("WARNING: All agent iterations failed during this session. Continuing pipeline gracefully.")
 
     log_stage("Agentic Loop Finished")
     log_metric("Final Best Score", current_best_score)

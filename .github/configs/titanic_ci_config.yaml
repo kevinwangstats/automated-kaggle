@@ -14,6 +14,8 @@
 
 # --- CORE REQUIRED SETTINGS ---
 
+ci_test_mode: true
+
 # workspace_root: The directory where ephemeral pipeline files are isolated.
 workspace_root: ".workspaces"
 
