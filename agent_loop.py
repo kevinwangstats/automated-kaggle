@@ -163,7 +163,9 @@ def run_agent_loop(
     pred_type: str = "prob",
     config_path: str = "config.yaml",
     available_models: list = None,
-    workspace_mgr=None
+    workspace_mgr=None,
+    strict_mode: bool = False,
+    ci_test_mode: bool = False
 ):
     if available_models is None:
         available_models = []
