@@ -12,67 +12,68 @@ import subprocess
 import argparse
 import sys
 from pathlib import Path
+from logger import log_info
 
 def setup_workspace(dataset_name: str):
     """
     Automates the Git worktree setup for a new dataset experiment.
     Installs requirements, creates the dataset branch, and builds the sibling worktree directory.
     """
-    print(f"[Setup] Starting setup for dataset: {dataset_name}")
+    log_info(f"Starting setup for dataset: {dataset_name}")
     
     # Install requirements
-    print("[Setup] Installing requirements...")
+    log_info("Installing requirements...")
     try:
         subprocess.run(["pip", "install", "-r", "requirements.txt"], check=True)
     except subprocess.CalledProcessError as e:
-        print(f"[Setup] Error installing requirements: {e}")
+        log_info(f"Error installing requirements: {e}")
         sys.exit(1)
 
     # Create branch
-    print(f"[Setup] Creating branch '{dataset_name}'...")
+    log_info(f"Creating branch '{dataset_name}'...")
     try:
         subprocess.run(["git", "branch", dataset_name], check=True, capture_output=True)
     except subprocess.CalledProcessError:
-        print(f"[Setup] Branch '{dataset_name}' likely already exists. Continuing.")
+        log_info(f"Branch '{dataset_name}' likely already exists. Continuing.")
 
     # Create worktree
     project_root = Path(__file__).resolve().parent
     worktree_path = project_root.parent / f"automated-kaggle-{dataset_name}"
     
-    print(f"[Setup] Creating worktree at '{worktree_path}'...")
+    log_info(f"Creating worktree at '{worktree_path}'...")
     try:
         subprocess.run(["git", "worktree", "add", str(worktree_path), dataset_name], check=True, capture_output=True)
     except subprocess.CalledProcessError:
-        print(f"[Setup] Worktree at '{worktree_path}' likely already exists. Continuing.")
+        log_info(f"Worktree at '{worktree_path}' likely already exists. Continuing.")
 
     # Download and extract dataset
-    print(f"[Setup] Downloading Kaggle dataset '{dataset_name}'...")
+    log_info(f"Downloading Kaggle dataset '{dataset_name}'...")
     try:
         subprocess.run(
             ["kaggle", "competitions", "download", "-c", dataset_name, "-p", f"data/{dataset_name}", "--force"],
             cwd=str(worktree_path),
             check=True
         )
-        print(f"[Setup] Extracting dataset '{dataset_name}'...")
+        log_info(f"Extracting dataset '{dataset_name}'...")
         subprocess.run(
             ["unzip", "-o", f"data/{dataset_name}/{dataset_name}.zip", "-d", f"data/{dataset_name}/"],
             cwd=str(worktree_path),
             check=True,
             capture_output=True
         )
-        print(f"[Setup] Cleaning up zip file...")
+        log_info(f"Cleaning up zip file...")
         subprocess.run(
             ["rm", f"data/{dataset_name}/{dataset_name}.zip"],
             cwd=str(worktree_path),
             check=True
         )
-        print("[Setup] Data successfully downloaded and extracted.")
+        log_info("Data successfully downloaded and extracted.")
     except subprocess.CalledProcessError as e:
-        print(f"[Setup] Warning: Data download/extraction failed. You may need to fetch it manually. Error: {e}")
+        log_info(f"Warning: Data download/extraction failed. You may need to fetch it manually. Error: {e}")
     except FileNotFoundError:
-        print("[Setup] Warning: 'kaggle' or 'unzip' command not found. Please ensure they are installed.")
+        log_info("Warning: 'kaggle' or 'unzip' command not found. Please ensure they are installed.")
 
-    print(f"[Setup] Workspace ready! To begin, run: cd {worktree_path}")
+    log_info(f"Workspace ready! To begin, run: cd {worktree_path}")
 
 def get_submission_path(config):
     """
@@ -103,7 +104,7 @@ def format_submission(config_path="config.yaml", workspace_mgr=None):
     """
     config_p = Path(config_path)
     if not config_p.exists():
-        print(f"[kaggle_ops] Config file {config_path} not found.")
+        log_info(f"Config file {config_path} not found.")
         return
 
     with open(config_path, "r") as f:
@@ -111,7 +112,7 @@ def format_submission(config_path="config.yaml", workspace_mgr=None):
 
     raw_sub_path = Path(workspace_mgr.get_file_path("raw_submission.csv")) if workspace_mgr else Path("raw_submission.csv")
     if not raw_sub_path.exists():
-        print(f"[kaggle_ops] {raw_sub_path} not found. Ensure the training script outputs this file.")
+        log_info(f"{raw_sub_path} not found. Ensure the training script outputs this file.")
         return
 
     raw_sub = pd.read_csv(raw_sub_path)
@@ -122,9 +123,9 @@ def format_submission(config_path="config.yaml", workspace_mgr=None):
     pred_type = config.get("pred_type", "prob")
 
     if example_sub_path and Path(example_sub_path).exists():
-        print(f"[kaggle_ops] Reading example submission from {example_sub_path} for column names.")
+        log_info(f"Reading example submission from {example_sub_path} for column names.")
     else:
-        print(f"[kaggle_ops] Using config pred_type: {pred_type}")
+        log_info(f"Using config pred_type: {pred_type}")
 
     final_sub = raw_sub.copy()
     
@@ -136,14 +137,14 @@ def format_submission(config_path="config.yaml", workspace_mgr=None):
             id_col_name = example_sub.columns[0]
             current_id_name = final_sub.columns[0]
             if current_id_name != id_col_name:
-                print(f"[kaggle_ops] Renaming ID column from '{current_id_name}' to '{id_col_name}'")
+                log_info(f"Renaming ID column from '{current_id_name}' to '{id_col_name}'")
                 final_sub = final_sub.rename(columns={current_id_name: id_col_name})
                 
             # Match target column name
             target_col_name = example_sub.columns[1]
             current_target_name = final_sub.columns[1]
             if current_target_name != target_col_name:
-                print(f"[kaggle_ops] Renaming target column from '{current_target_name}' to '{target_col_name}'")
+                log_info(f"Renaming target column from '{current_target_name}' to '{target_col_name}'")
                 final_sub = final_sub.rename(columns={current_target_name: target_col_name})
             
             target_col = target_col_name
@@ -151,11 +152,11 @@ def format_submission(config_path="config.yaml", workspace_mgr=None):
     if len(final_sub.columns) > 1:
         target_col = final_sub.columns[1]
         if pred_type == "0/1":
-            print("[kaggle_ops] Converting probabilities to discrete 0/1 classes (threshold=0.5).")
+            log_info("Converting probabilities to discrete 0/1 classes (threshold=0.5).")
             if pd.api.types.is_float_dtype(final_sub[target_col]) and final_sub[target_col].between(0, 1).all():
                 final_sub[target_col] = (final_sub[target_col] >= 0.5).astype(int)
         elif pred_type == "true/false":
-            print("[kaggle_ops] Converting probabilities to True/False labels (threshold=0.5).")
+            log_info("Converting probabilities to True/False labels (threshold=0.5).")
             if pd.api.types.is_float_dtype(final_sub[target_col]) and final_sub[target_col].between(0, 1).all():
                 final_sub[target_col] = (final_sub[target_col] >= 0.5)
         else:
@@ -164,7 +165,7 @@ def format_submission(config_path="config.yaml", workspace_mgr=None):
 
     output_path = workspace_mgr.get_file_path("submission.csv") if workspace_mgr else get_submission_path(config)
     final_sub.to_csv(output_path, index=False)
-    print(f"[kaggle_ops] Saved final formatted submission to {output_path}")
+    log_info(f"Saved final formatted submission to {output_path}")
 
 def submit_to_kaggle(config_path="config.yaml", commit_id=None, workspace_mgr=None):
     """
@@ -173,7 +174,7 @@ def submit_to_kaggle(config_path="config.yaml", commit_id=None, workspace_mgr=No
     """
     config_p = Path(config_path)
     if not config_p.exists():
-        print(f"[kaggle_ops] Config file {config_path} not found.")
+        log_info(f"Config file {config_path} not found.")
         return
 
     with open(config_path, "r") as f:
@@ -181,12 +182,12 @@ def submit_to_kaggle(config_path="config.yaml", commit_id=None, workspace_mgr=No
 
     auto_submit_val = str(config.get("auto_kaggle_submit", "never")).lower()
     if auto_submit_val in ["false", "never"]:
-        print("[kaggle_ops] auto_kaggle_submit is false or never. Skipping automated Kaggle submission.")
+        log_info("auto_kaggle_submit is false or never. Skipping automated Kaggle submission.")
         return
 
     sub_path = Path(workspace_mgr.get_file_path("submission.csv")) if workspace_mgr else Path(get_submission_path(config))
     if not sub_path.exists():
-        print(f"[kaggle_ops] {sub_path} not found. Cannot submit.")
+        log_info(f"{sub_path} not found. Cannot submit.")
         return
 
     dataset_path = config.get("dataset_path", "")
@@ -197,7 +198,7 @@ def submit_to_kaggle(config_path="config.yaml", commit_id=None, workspace_mgr=No
         competition_name = path_parts[1]
     
     if not competition_name:
-        print(f"[kaggle_ops] Could not infer competition name from dataset_path: {dataset_path}")
+        log_info(f"Could not infer competition name from dataset_path: {dataset_path}")
         return
 
     if not commit_id:
@@ -210,20 +211,20 @@ def submit_to_kaggle(config_path="config.yaml", commit_id=None, workspace_mgr=No
 
     submission_message = f"Agentic AutoML Pipeline Submission (Commit: {commit_id})"
 
-    print(f"[kaggle_ops] Submitting to Kaggle competition: {competition_name} with message: '{submission_message}'")
+    log_info(f"Submitting to Kaggle competition: {competition_name} with message: '{submission_message}'")
     try:
         result = subprocess.run(
             ["kaggle", "competitions", "submit", "-c", competition_name, "-f", sub_path, "-m", submission_message],
             capture_output=True,
             text=True
         )
-        print(result.stdout)
+        log_info(result.stdout)
         if result.stderr:
-            print(f"[kaggle_ops] Errors/Warnings:\n{result.stderr}")
+            log_info(f"Errors/Warnings:\n{result.stderr}")
     except FileNotFoundError:
-        print("[kaggle_ops] 'kaggle' command not found. Ensure kaggle CLI is installed and configured.")
+        log_info("'kaggle' command not found. Ensure kaggle CLI is installed and configured.")
     except Exception as e:
-        print(f"[kaggle_ops] Failed to submit to Kaggle: {e}")
+        log_info(f"Failed to submit to Kaggle: {e}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

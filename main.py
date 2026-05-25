@@ -20,15 +20,19 @@ from baseline_engine import evaluate_baselines
 from agent_loop import run_agent_loop, run_training_script
 from git_manager import GitManager, dataset_branch_from_dataset_path
 from workspace_manager import WorkspaceManager
-from logger import log_stage, log_error
+from logger import log_stage, log_error, log_info, enable_file_logging
 from pathlib import Path
 
 def main():
     parser = argparse.ArgumentParser(description="Agentic AutoML Pipeline")
     parser.add_argument("--config", type=str, default="config.yaml", help="Path to YAML configuration file")
+    parser.add_argument("--log-file", type=str, metavar="PATH", help="Optional path to save logs to a file (e.g., automl.log)")
     parser.add_argument("-y", "--yes", action="store_true", help="Skip user confirmation before LLM calls")
     parser.add_argument("-r", "--resume", action="store_true", help="Resume from previous iterations")
     args = parser.parse_args()
+
+    if args.log_file:
+        enable_file_logging(args.log_file)
 
     try:
         with open(args.config, 'r') as f:
@@ -65,8 +69,8 @@ def main():
         
         if had_commits and git_mgr.is_on_main() and dataset_branch != "main":
             if git_mgr.has_uncommitted_changes():
-                print("\n[Warning] You have uncommitted changes on the 'main' branch.")
-                print("You will not be running the latest software unless you commit.")
+                log_info("You have uncommitted changes on the 'main' branch.")
+                log_info("You will not be running the latest software unless you commit.")
                 ans = input("Are you happy to git add all file changes, commit, and push before proceeding to work on the dataset branch? (y/n): ")
                 if ans.lower() == 'y':
                     msg = input("Enter commit message: ")
@@ -74,20 +78,20 @@ def main():
                     git_mgr.commit_all(msg)
                     try:
                         git_mgr.repo.remotes.origin.push()
-                        print("Pushed to origin.")
+                        log_info("Pushed to origin.")
                     except Exception as e:
-                        print(f"Push to origin skipped/failed: {e}")
+                        log_info(f"Push to origin skipped/failed: {e}")
                 else:
-                    print("Aborting. Please stash or commit your changes manually before proceeding to avoid conflicts.")
+                    log_info("Aborting. Please stash or commit your changes manually before proceeding to avoid conflicts.")
                     sys.exit(1)
             
             if git_mgr.branch_exists(dataset_branch) and not git_mgr.is_branch_based_on_latest_main(dataset_branch):
-                print(f"\n[Warning] The dataset branch '{dataset_branch}' already exists, but it is not based off the latest commit on 'main'.")
-                print("You will not be running the latest software for this dataset.")
+                log_info(f"The dataset branch '{dataset_branch}' already exists, but it is not based off the latest commit on 'main'.")
+                log_info("You will not be running the latest software for this dataset.")
                 ans = input(f"Would you like to delete the '{dataset_branch}' branch by force to start fresh from the latest main? (y/n): ")
                 if ans.lower() == 'y':
                     git_mgr.delete_branch(dataset_branch)
-                    print(f"Deleted outdated dataset branch '{dataset_branch}'.")
+                    log_info(f"Deleted outdated dataset branch '{dataset_branch}'.")
 
         # Checkout dataset branch to reveal tracked files
         if had_commits:
@@ -101,7 +105,7 @@ def main():
             if args.yes:
                 resolved_mode = "resume" if run_mode == "prompt" else run_mode
                 should_resume = (resolved_mode == "resume")
-                print(f"Skipping interactive prompt due to -y flag. Using fallback mode: {resolved_mode}")
+                log_info(f"Skipping interactive prompt due to -y flag. Using fallback mode: {resolved_mode}")
             else:
                 if run_mode == "resume":
                     should_resume = True
@@ -112,7 +116,7 @@ def main():
                     should_resume = (ans.lower() == 'y')
                 
         if args.resume and not has_previous_state:
-            print("[Warning] --resume passed but no previous root state found. Falling back to start from scratch.")
+            log_info("--resume passed but no previous root state found. Falling back to start from scratch.")
             should_resume = False
 
         if had_commits and not should_resume:
@@ -155,7 +159,7 @@ def main():
                     f.write(wandb.run.id)
 
         if should_resume:
-            print("Resuming from previous state. Skipping EDA and Baseline generation.")
+            log_info("Resuming from previous state. Skipping EDA and Baseline generation.")
             base_score = None
             
             # Determine task
@@ -190,10 +194,10 @@ def main():
                 
                 if current_code != last_code:
                     is_modified = True
-                    print("[Info] Detected manual modifications to train_model.py.")
+                    log_info("Detected manual modifications to train_model.py.")
             
             # 2. Always execute train_model.py as-is first
-            print("[Info] Executing existing train_model.py to establish current baseline score...")
+            log_info("Executing existing train_model.py to establish current baseline score...")
             t_start = time.time()
             try:
                 base_score = run_training_script(
@@ -202,10 +206,10 @@ def main():
                     config_path=args.config,
                     workspace_mgr=workspace_mgr
                 )
-                print(f"[Info] Established current score: {base_score:.4f} (took {time.time() - t_start:.2f}s)")
+                log_info(f"Established current score: {base_score:.4f} (took {time.time() - t_start:.2f}s)")
             except Exception as e:
                 log_error("Failed to execute existing train_model.py", e)
-                print("[Info] Falling back to regenerating a fresh baseline...")
+                log_info("Falling back to regenerating a fresh baseline...")
                 t_fallback = time.time()
                 eda_path = perform_eda(dataset_path, target_col, max_rows=max_rows, workspace_mgr=workspace_mgr)
                 base_score, script_path, task = evaluate_baselines(
@@ -219,14 +223,14 @@ def main():
                     max_rows=max_rows,
                     workspace_mgr=workspace_mgr
                 )
-                print(f"[Info] Regenerated baseline in {time.time() - t_fallback:.2f}s. Score: {base_score:.4f}")
+                log_info(f"Regenerated baseline in {time.time() - t_fallback:.2f}s. Score: {base_score:.4f}")
                 git_mgr.commit_all(f"Baseline Regenerated (broken resume) | CV Score: {base_score:.4f}")
                 # Skip human intervention logging since we regenerated
                 is_modified = False
 
             # 3. Log HUMAN_INTERVENTION if modified, now using the evaluated score
             if is_modified:
-                print("[Info] Logging HUMAN_INTERVENTION to history with the evaluated score.")
+                log_info("Logging HUMAN_INTERVENTION to history with the evaluated score.")
                 valid_scores = [r['score'] for r in history if r.get('score') is not None]
                 prev_best = max(valid_scores) if valid_scores else float('-inf')
                 improved = (base_score > prev_best) if valid_scores else True
@@ -269,14 +273,14 @@ def main():
                         t_submit = time.time()
                         kaggle_ops.format_submission(args.config, workspace_mgr=workspace_mgr)
                         kaggle_ops.submit_to_kaggle(args.config, commit_id=git_mgr.get_current_commit(), workspace_mgr=workspace_mgr)
-                        print(f"[Info] Resumed state submission completed in {time.time() - t_submit:.2f}s")
+                        log_info(f"Resumed state submission completed in {time.time() - t_submit:.2f}s")
                 except Exception as e:
                     log_error(f"Failed to submit resumed state to Kaggle", e)
         else:
             # Phase 1: EDA
             t_eda = time.time()
             eda_path = perform_eda(dataset_path, target_col, max_rows=max_rows, workspace_mgr=workspace_mgr)
-            print(f"[Info] Phase 1 (EDA) completed in {time.time() - t_eda:.2f}s")
+            log_info(f"Phase 1 (EDA) completed in {time.time() - t_eda:.2f}s")
 
             # Phase 2: Baseline
             t_baseline = time.time()
@@ -291,7 +295,7 @@ def main():
                 max_rows=max_rows,
                 workspace_mgr=workspace_mgr
             )
-            print(f"[Info] Phase 2 (Baseline) completed in {time.time() - t_baseline:.2f}s. Score: {base_score:.4f}")
+            log_info(f"Phase 2 (Baseline) completed in {time.time() - t_baseline:.2f}s. Score: {base_score:.4f}")
             
             # Initial commit to secure baseline state
             git_mgr.commit_all(f"Initial Baseline Commit | CV Score: {base_score:.4f}")
@@ -309,7 +313,7 @@ def main():
                         t_submit = time.time()
                         kaggle_ops.format_submission(args.config, workspace_mgr=workspace_mgr)
                         kaggle_ops.submit_to_kaggle(args.config, commit_id=git_mgr.get_current_commit(), workspace_mgr=workspace_mgr)
-                        print(f"[Info] Baseline submission completed in {time.time() - t_submit:.2f}s")
+                        log_info(f"Baseline submission completed in {time.time() - t_submit:.2f}s")
                 except Exception as e:
                     log_error(f"Failed to submit baseline to Kaggle", e)
 
@@ -347,7 +351,7 @@ def main():
             workspace_mgr=workspace_mgr,
             ci_test_mode=ci_test_mode
         )
-        print(f"[Info] Phase 3 (Agentic Loop) completed in {time.time() - t_loop:.2f}s")
+        log_info(f"Phase 3 (Agentic Loop) completed in {time.time() - t_loop:.2f}s")
         
         # Ensure we have a raw_submission.csv if we have a test_path
         raw_sub_path = Path(workspace_mgr.get_file_path("raw_submission.csv")) if workspace_mgr else Path("raw_submission.csv")
@@ -357,7 +361,7 @@ def main():
             try:
                 script_path = "train_model.py"
                 run_training_script(script_path=script_path, timeout=timeout, config_path=args.config, workspace_mgr=workspace_mgr)
-                print(f"[Info] Baseline submission generation completed in {time.time() - t_gen:.2f}s")
+                log_info(f"Baseline submission generation completed in {time.time() - t_gen:.2f}s")
             except Exception as e:
                 log_error("Failed to generate baseline submission", e)
 
@@ -366,7 +370,7 @@ def main():
         log_stage("Formatting Final Submission")
         t_format = time.time()
         kaggle_ops.format_submission(args.config, workspace_mgr=workspace_mgr)
-        print(f"[Info] Phase 4 (Format Submission) completed in {time.time() - t_format:.2f}s")
+        log_info(f"Phase 4 (Format Submission) completed in {time.time() - t_format:.2f}s")
 
         if wandb_enabled:
             wandb.finish()

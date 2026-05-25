@@ -17,7 +17,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.base import clone
 from sklearn.metrics import roc_auc_score, get_scorer, accuracy_score, f1_score, confusion_matrix
-from logger import log_stage, log_metric, log_error, suppress_stdout_stderr
+from logger import log_stage, log_metric, log_error, log_info, suppress_stdout_stderr
 from h2o.sklearn import H2OAutoMLClassifier, H2OAutoMLRegressor
 import os
 import re
@@ -294,19 +294,19 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
                             
                         metric_reports[m_name] = report
                 except Exception as e:
-                    print(f"Failed to evaluate {m_name}: {e}")
+                    log_info(f"Failed to evaluate {m_name}: {e}")
                     pass
         
         # Print detailed reports outside the suppression block
         if metric_reports:
-            print("\n" + "="*30)
+            log_info("\n" + "="*30)
             if len(np.unique(y)) == 2:
-                print("DETAILED BASELINE METRICS (Binary Classification)")
+                log_info("DETAILED BASELINE METRICS (Binary Classification)")
             else:
-                print("DETAILED BASELINE METRICS (Multi-class Classification)")
+                log_info("DETAILED BASELINE METRICS (Multi-class Classification)")
             for r in metric_reports.values():
-                print(r)
-            print("="*30 + "\n")
+                log_info(r)
+            log_info("="*30 + "\n")
                 
         if not results:
             raise ValueError("All baseline models failed to evaluate.")

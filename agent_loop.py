@@ -21,7 +21,7 @@ import kaggle_ops
 from pathlib import Path
 from litellm import completion
 from litellm.exceptions import Timeout, BadRequestError, AuthenticationError
-from logger import log_stage, log_error, log_metric
+from logger import log_stage, log_error, log_metric, log_info
 from git_manager import GitManager
 
 def get_file_messages(file_paths: list, model_name: str, api_key: str = None) -> list:
@@ -37,7 +37,7 @@ def get_file_messages(file_paths: list, model_name: str, api_key: str = None) ->
                 base_url = "https://api.moonshot.ai/v1" if ("kimi" in model_name.lower() or "moonshot" in model_name.lower()) else None
                 client = OpenAI(api_key=api_key, base_url=base_url) if base_url else OpenAI(api_key=api_key)
                 
-                print(f"  [Info] Uploading files via OpenAI/Moonshot API...")
+                log_info("Uploading files via OpenAI/Moonshot API...")
                 for fp in file_paths:
                     if not Path(fp).exists(): continue
                     file_object = client.files.create(file=Path(fp), purpose="file-extract")
@@ -45,9 +45,9 @@ def get_file_messages(file_paths: list, model_name: str, api_key: str = None) ->
                     messages.append({"role": "system", "content": f"File Content for {fp}:\n{file_content}"})
                 return messages
             except Exception as e:
-                print(f"  [Warning] File upload failed: {e}. Falling back to local text reading.")
+                log_info(f"File upload failed: {e}. Falling back to local text reading.")
         else:
-             print("  [Warning] API key not found. Falling back to local file reading.")
+             log_info("API key not found. Falling back to local file reading.")
 
     # 2. Gemini
     elif "gemini" in model_name.lower():
@@ -55,7 +55,7 @@ def get_file_messages(file_paths: list, model_name: str, api_key: str = None) ->
             import google.generativeai as genai
             if api_key:
                 genai.configure(api_key=api_key)
-            print(f"  [Info] Uploading files via Gemini API...")
+            log_info("Uploading files via Gemini API...")
             for fp in file_paths:
                 if not Path(fp).exists(): continue
                 file_object = genai.upload_file(fp)
@@ -63,10 +63,10 @@ def get_file_messages(file_paths: list, model_name: str, api_key: str = None) ->
                 messages.append({"role": "system", "content": [file_object, f"File: {fp}"]})
             return messages
         except Exception as e:
-            print(f"  [Warning] Gemini file upload failed: {e}. Falling back to local text reading.")
+            log_info(f"Gemini file upload failed: {e}. Falling back to local text reading.")
 
     # 3. Fallback
-    print("  [Info] Reading files locally as fallback...")
+    log_info("Reading files locally as fallback...")
     for fp in file_paths:
         if Path(fp).exists():
             with open(fp, 'r') as f:
@@ -265,10 +265,10 @@ Output ONLY the full modified Python code wrapped in python ...  blocks. Do not 
 """
         
         if not skip_confirmation:
-            print(f"\n[AgenticAutoML] Preparing to call LLM for iteration {i}.")
+            log_info(f"Preparing to call LLM for iteration {i}.")
             confirm = input("Continue with this API call? (y/n): ")
             if confirm.lower() != 'y':
-                print("Skipping LLM call and aborting loop.")
+                log_info("Skipping LLM call and aborting loop.")
                 break
                 
         # Call LLM
@@ -293,17 +293,17 @@ Output ONLY the full modified Python code wrapped in python ...  blocks. Do not 
                 base = ollama_base_url or os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
                 completion_kwargs["api_base"] = base
                 
-                print(f"  [Info] Local Ollama model detected. Checking connection to {base} ...")
+                log_info(f"Local Ollama model detected. Checking connection to {base} ...")
                 try:
                     urllib.request.urlopen(base, timeout=3)
                 except urllib.error.URLError:
-                    print(f"  [Warning] Could not connect to Ollama at {base}.")
-                    print(f"  [Warning] Please ensure the Ollama app is running locally.")
-                print(f"  [Info] Waiting for Ollama response... (this may take a while depending on your hardware)")
+                    log_info(f"Could not connect to Ollama at {base}.")
+                    log_info(f"Please ensure the Ollama app is running locally.")
+                log_info(f"Waiting for Ollama response... (this may take a while depending on your hardware)")
             else:
                 provider = model_name.split('/')[0] if '/' in model_name else model_name
-                print(f"  [Info] Using remote API ({provider}). Please ensure your {provider.upper()}_API_KEY is set if you haven't.")
-                print(f"  [Info] Waiting for API response...")
+                log_info(f"Using remote API ({provider}). Please ensure your {provider.upper()}_API_KEY is set if you haven't.")
+                log_info(f"Waiting for API response...")
             
             llm_output = call_agent_llm(completion_kwargs)
         except (BadRequestError, AuthenticationError) as e:
@@ -312,7 +312,7 @@ Output ONLY the full modified Python code wrapped in python ...  blocks. Do not 
         except Timeout as e:
             log_error("LLM API Call Timed Out", e)
             if "gemini-2.5-flash" not in model_name:
-                print(f"  [Warning] Temporary fallback to gemini/gemini-2.5-flash due to timeout.")
+                log_info(f"Temporary fallback to gemini/gemini-2.5-flash due to timeout.")
                 completion_kwargs["model"] = "gemini/gemini-2.5-flash"
                 if "api_base" in completion_kwargs:
                     del completion_kwargs["api_base"]
@@ -326,7 +326,7 @@ Output ONLY the full modified Python code wrapped in python ...  blocks. Do not 
         except Exception as e:
             log_error("LLM API Call failed", e)
             if "ollama" in (model_name or "").lower():
-                print(f"  [Help] If you haven't pulled this model yet, open a new terminal and run: ollama pull {model_name.replace('ollama/', '')}")
+                log_info(f"If you haven't pulled this model yet, open a new terminal and run: ollama pull {model_name.replace('ollama/', '')}")
             continue
             
         new_code = extract_python_code(llm_output)
