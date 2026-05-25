@@ -24,6 +24,8 @@ from litellm.exceptions import Timeout, BadRequestError, AuthenticationError
 from logger import log_stage, log_error, log_metric, log_info
 from git_manager import GitManager
 
+from utils import read_file
+
 def get_file_messages(file_paths: list, model_name: str, api_key: str = None) -> list:
     """Uploads files via native API if supported, or falls back to local text extraction."""
     from pathlib import Path
@@ -87,10 +89,6 @@ def extract_python_code(text: str) -> str:
         raise ValueError("LLM generated an empty response or no valid Python code could be extracted.")
     return code
 
-def read_file(filepath: str) -> str:
-    with open(filepath, 'r') as f:
-        return f.read()
-
 @weave.op()
 def call_agent_llm(completion_kwargs: dict) -> str:
     """Wrapper for LLM completion to enable Weave tracing."""
@@ -144,6 +142,29 @@ def run_training_script(script_path="train_model.py", timeout: int = 600, config
     except json.JSONDecodeError:
         raise ValueError(f"metrics.json is malformed. Content: {metrics_path.read_text()}")
 
+def _init_weave(wandb_enabled: bool, wandb_project: str, wandb_entity: str):
+    if wandb_enabled:
+        weave_project = wandb_project if wandb_project else "agentic-automl"
+        if wandb_entity:
+            weave_project = f"{wandb_entity}/{weave_project}"
+        weave.init(weave_project)
+
+def _build_agent_memory(history: list) -> str:
+    memory_string = "### Agent Memory (Past Experiments)\n"
+    recent_history = history[-3:] if len(history) >= 3 else history
+
+    for run in recent_history:
+        status = "IMPROVED" if run.get('improved') else ("FAILED WITH ERROR" if run.get('error') else "DEGRADED")
+        memory_string += f"- Iteration {run['iteration']} ({status}): "
+        
+        if run.get('error'):
+            # Truncate error to last 1000 chars
+            memory_string += f"{str(run['error'])[-1000:]}\n"
+        else:
+            memory_string += f"Score {run.get('score')}. Reasoning: {run.get('agent_reasoning', 'No reasoning provided')}\n"
+            
+    return memory_string
+
 def run_agent_loop(
     dataset_path: str,
     target_col: str,
@@ -171,11 +192,7 @@ def run_agent_loop(
         available_models = []
     log_stage("Starting Agentic Loop")
     
-    if wandb_enabled:
-        weave_project = wandb_project if wandb_project else "agentic-automl"
-        if wandb_entity:
-            weave_project = f"{wandb_entity}/{weave_project}"
-        weave.init(weave_project)
+    _init_weave(wandb_enabled, wandb_project, wandb_entity)
         
     current_best_score = base_score
     history = []
@@ -216,18 +233,7 @@ def run_agent_loop(
         
         script_path = "train_model.py"
         current_script = read_file(script_path)
-        memory_string = "### Agent Memory (Past Experiments)\n"
-        recent_history = history[-3:] if len(history) >= 3 else history
-
-        for run in recent_history:
-            status = "IMPROVED" if run.get('improved') else ("FAILED WITH ERROR" if run.get('error') else "DEGRADED")
-            memory_string += f"- Iteration {run['iteration']} ({status}): "
-            
-            if run.get('error'):
-                # Truncate error to last 1000 chars
-                memory_string += f"{str(run['error'])[-1000:]}\n"
-            else:
-                memory_string += f"Score {run.get('score')}. Reasoning: {run.get('agent_reasoning', 'No reasoning provided')}\n"
+        memory_string = _build_agent_memory(history)
 
         pred_prob_instruction = "Ensure that for the final `raw_submission.csv`, you ALWAYS predict the continuous PROBABILITIES for the positive class (e.g., using `predict_proba(test_X)[:, 1]`). Do NOT apply any thresholding or class conversion. Another script will handle formatting it for Kaggle into `submission.csv`."
 

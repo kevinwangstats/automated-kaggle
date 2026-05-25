@@ -18,6 +18,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.base import clone
 from sklearn.metrics import roc_auc_score, get_scorer, accuracy_score, f1_score, confusion_matrix
 from logger import log_stage, log_metric, log_error, log_info, suppress_stdout_stderr
+from utils import clean_column_names
 from h2o.sklearn import H2OAutoMLClassifier, H2OAutoMLRegressor
 import os
 import re
@@ -60,18 +61,7 @@ from sklearn.metrics import make_scorer, roc_auc_score, mean_squared_error
 {imports_str}
 from pathlib import Path
 from tqdm import tqdm
-
-def load_config(config_path="config.yaml"):
-    with open(config_path, "r") as f:
-        config = yaml.safe_load(f)
-    # Resolve relative dataset paths against the repo root (passed via env var),
-    # NOT the config file directory, since configs may live in subdirectories.
-    repo_root = Path(os.environ.get("REPO_ROOT", Path.cwd()))
-    if config.get("dataset_path") and not Path(config.get("dataset_path")).is_absolute():
-        config["dataset_path"] = str(repo_root / config["dataset_path"])
-    if config.get("test_path") and not Path(config.get("test_path")).is_absolute():
-        config["test_path"] = str(repo_root / config["test_path"])
-    return config
+from utils import load_config, clean_column_names
 
 def train_and_evaluate(config_path="config.yaml", output_dir="."):
     # 1. Load Configuration & Data
@@ -87,7 +77,7 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     y_raw = df[target_col]
     X = df.drop(columns=[target_col])
     
-    X.columns = [re.sub(r'[^\\w\\s]', '', col).replace(' ', '_') for col in X.columns]
+    X = clean_column_names(X)
     
     task = 'classification' if y_raw.nunique() < 20 else 'regression'
     if task == 'classification':
@@ -196,7 +186,7 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
         X = df.drop(columns=[target_col])
         
         # Clean column names to avoid LightGBM JSON errors
-        X.columns = [re.sub(r'[^\w\s]', '', col).replace(' ', '_') for col in X.columns]
+        X = clean_column_names(X)
         
         task = 'classification' if y_raw.nunique() < 20 else 'regression'
         if task == 'classification':

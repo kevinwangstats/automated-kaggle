@@ -13,6 +13,7 @@ import argparse
 import sys
 from pathlib import Path
 from logger import log_info
+from utils import load_config
 
 def setup_workspace(dataset_name: str):
     """
@@ -75,13 +76,15 @@ def setup_workspace(dataset_name: str):
 
     log_info(f"Workspace ready! To begin, run: cd {worktree_path}")
 
-def get_submission_path(config):
+def get_submission_path(config, workspace_mgr=None):
     """
     Determines where submission.csv should be saved.
-    Default is "submission.csv" in the current directory.
-    If example_submission is provided, it attempts to save it in the same directory,
-    unless that would overwrite the example_submission itself.
+    Returns the workspace manager's path if available.
+    Otherwise defaults to "submission.csv" or follows example_submission context.
     """
+    if workspace_mgr:
+        return str(Path(workspace_mgr.get_file_path("submission.csv")))
+        
     example_sub_path = config.get("example_submission")
     output_path = Path("submission.csv")
     
@@ -102,13 +105,10 @@ def format_submission(config_path="config.yaml", workspace_mgr=None):
     Reads raw_submission.csv and formats it into submission.csv based on config.
     Uses example_submission to infer target column and data types if available.
     """
-    config_p = Path(config_path)
-    if not config_p.exists():
-        log_info(f"Config file {config_path} not found.")
+    config = load_config(config_path)
+    if not config:
+        log_info(f"Config file {config_path} not found or invalid.")
         return
-
-    with open(config_path, "r") as f:
-        config = yaml.safe_load(f)
 
     raw_sub_path = Path(workspace_mgr.get_file_path("raw_submission.csv")) if workspace_mgr else Path("raw_submission.csv")
     if not raw_sub_path.exists():
@@ -163,7 +163,7 @@ def format_submission(config_path="config.yaml", workspace_mgr=None):
             # pred_type == "prob" — keep raw probabilities as-is
             pass
 
-    output_path = workspace_mgr.get_file_path("submission.csv") if workspace_mgr else get_submission_path(config)
+    output_path = get_submission_path(config, workspace_mgr)
     final_sub.to_csv(output_path, index=False)
     log_info(f"Saved final formatted submission to {output_path}")
 
@@ -172,20 +172,17 @@ def submit_to_kaggle(config_path="config.yaml", commit_id=None, workspace_mgr=No
     Submits the formatted submission to Kaggle if auto_kaggle_submit is enabled.
     Includes the git commit ID in the submission message for provenance.
     """
-    config_p = Path(config_path)
-    if not config_p.exists():
-        log_info(f"Config file {config_path} not found.")
+    config = load_config(config_path)
+    if not config:
+        log_info(f"Config file {config_path} not found or invalid.")
         return
-
-    with open(config_path, "r") as f:
-        config = yaml.safe_load(f)
 
     auto_submit_val = str(config.get("auto_kaggle_submit", "never")).lower()
     if auto_submit_val in ["false", "never"]:
         log_info("auto_kaggle_submit is false or never. Skipping automated Kaggle submission.")
         return
 
-    sub_path = Path(workspace_mgr.get_file_path("submission.csv")) if workspace_mgr else Path(get_submission_path(config))
+    sub_path = Path(get_submission_path(config, workspace_mgr))
     if not sub_path.exists():
         log_info(f"{sub_path} not found. Cannot submit.")
         return

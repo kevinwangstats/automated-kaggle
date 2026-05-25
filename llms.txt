@@ -22,7 +22,7 @@ Before proposing code edits, you MUST read and strictly adhere to the instructio
 - It triggers `eda_engine.py` to generate `EDA.md`.
 - `baseline_engine.py` runs basic models (XGBoost, LightGBM, CatBoost, H2O AutoML) via K-Fold CV to establish initial performance.
 - Crucially, `baseline_engine.py` then writes a `train_model.py` template that ensembles the dynamically loaded models from `models_registry.yaml` using a scikit-learn `Pipeline`.
-- `agent_loop.py` takes control. It leverages a Multi-Message architecture with **native file uploads** (Gemini API or Moonshot/OpenAI API) to inject `EDA.md` and `train_model.py` directly into the system context, preventing prompt bloat.
+- `agent_loop.py` takes control. It leverages a Multi-Message architecture with **native file uploads** (Gemini API or Moonshot/OpenAI `file-extract` API) to inject `EDA.md` and `train_model.py` directly into the system context, preventing prompt bloat.
 - The LLM rewrites `train_model.py` to optimize the pipeline.
 - The new script is executed in an isolated `subprocess.run` with a strict timeout.
 - If the script fails, the `RuntimeError` or `TimeoutExpired` is captured. To prevent context window bloat, the traceback is aggressively truncated (max 1500 chars) before being fed *back* into the next iteration's prompt.
@@ -48,9 +48,11 @@ Before proposing code edits, you MUST read and strictly adhere to the instructio
 ## 5. Formatting, Tracking & Logging Strict Rules
 - **`CHANGELOG.md`**: Must only contain successful iterations. It must follow a markdown bullet format: `- **Iter <N>**: Score <score> (Commit: <id>)`. Do not bloat this file with verbose logging.
 - **`history.json`**: Tracks all iterations (both successful and failed). It strictly follows an array of objects with schema: `{"iteration": int, "commit": str, "score": float, "improved": bool, "prompt": str, "response": str, "error": str}`. If editing logic related to this, you must preserve these keys.
-- **DO NOT use standard `print()`** statements for debugging standard execution paths. Use the custom `logger.py` (`log_stage`, `log_error`, `log_metric`).
+- **DO NOT use standard `print()`** statements for debugging standard execution paths. Use the custom `logger.py` module (`log_info`, `log_stage`, `log_error`, `log_metric`).
+- **File Logging**: `main.py` accepts an optional `--log-file` argument to mirror console outputs to a file.
+- **Weave Tracing**: The LLM interaction in `agent_loop.py` is traced using Weights & Biases Weave (`@weave.op()`). Do not strip or alter decorators that handle this observability.
 - **Exception 1**: The generated script MUST accept `--output_dir` (using `argparse`) and write its final cross-validation score to a file named `metrics.json` located within that directory (e.g. `Path(output_dir) / "metrics.json"`). This JSON file acts as the formal contract between the generated training script and the orchestrator.
-- **Exception 2**: For binary classification tasks, `baseline_engine.py` runs `cross_val_predict` to compute a Confusion Matrix and derives Accuracy, F1 Score, Sensitivity, and Specificity. These reports are intentionally printed via `print()` *outside* the `suppress_stdout_stderr()` block to ensure visibility in GitHub Actions logs.
+- **Exception 2**: For binary classification tasks, `baseline_engine.py` runs `cross_val_predict` to compute a Confusion Matrix and derives Accuracy, F1 Score, Sensitivity, and Specificity. These reports are logged via `log_info` *outside* the `suppress_stdout_stderr()` block to ensure visibility in GitHub Actions logs.
 - LightGBM models must always be initialized with `verbose=-1` to suppress C++ backend warnings.
 
 ## 6. Configuration & Environment Variables
