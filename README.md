@@ -1,6 +1,6 @@
 # Agentic AutoML Tabular Pipeline Template
 
-This repository serves as a ready-to-use template for automated, agentic modeling on **tabular** Kaggle data challenges. It implements an LLM-driven pipeline that iteratively improves machine learning performance by concurrently optimizing and ensembling a suite of powerful frameworks (e.g., **XGBoost**, **LightGBM**, **CatBoost**, **HistGradientBoosting**), while also supporting evaluation of **H2O AutoML** baselines.
+This repository serves as a ready-to-use template for automated, agentic modeling on **tabular** Kaggle data challenges. It implements an LLM-driven pipeline that iteratively improves machine learning performance by concurrently optimizing and ensembling a suite of powerful frameworks (e.g., **XGBoost**, **LightGBM**, **CatBoost**, **Ridge Regression**), while also supporting evaluation of **H2O AutoML** baselines.
 
 The pipeline establishes a baseline ensemble out of the box, and then uses LLM-driven reasoning to tune hyperparameters, perform feature engineering, and refine the ensemble architecture to maximize cross-validation scores.
 
@@ -93,13 +93,14 @@ python main.py
 
 ### Advanced Usage
 
-You can override the default config file path, skip user confirmation, or resume a previous run:
+You can override the default config file path, skip user confirmation, resume a previous run, or enable file logging:
 
 ```bash
-python main.py --config custom_config.yaml -y --resume
+python main.py --config custom_config.yaml -y --resume --log-file automl.log
 ```
 
 - `--config`: Path to a custom YAML configuration file (default: `config.yaml`).
+- `--log-file`: Optional path to mirror console output to a `.log` file (e.g., `automl.log`).
 - `-y`: Skip the manual user confirmation prompt before each LLM API call. When previous state is detected, this flag skips the interactive resume/restart prompt and falls back to the `run_mode` defined in `config.yaml` (default: `resume`).
 - `-r`, `--resume`: Force-resume an existing optimization session. This skips the EDA and Baseline generation phases, loading the previous best score and W&B run ID to continue iterating directly from your current best `train_model.py` script.
 
@@ -130,5 +131,6 @@ All pipeline artifacts are isolated inside a static workspace directory at `.wor
 - **`EDA.md`**: An automatically generated exploratory data analysis summary.
 - **`metrics.json`**: The cross-validation score contract between the generated script and the orchestrator.
 - **`CHANGELOG.md`**: Stores a human-readable summary of every successful iteration.
-- **`history.json`**: Stores granular metrics, hyperparameters, and git commits for every attempt. Note that the orchestrator uses **Semantic Memory**: it distills this history into a lightweight summary of reasoning and outcomes for the LLM to prevent context bloat, rather than feeding raw past code strings back into the prompt.
+- **history.json**: Stores granular metrics, hyperparameters, and git commits for every attempt. Note that the orchestrator uses **Semantic Memory**: it distills this history into a lightweight summary of reasoning and outcomes for the LLM to prevent context bloat, rather than feeding raw past code strings back into the prompt.
+- **W&B Weave Tracing**: If Weights & Biases is enabled, all LLM API calls are traced using Weave. This tracks exact prompts, agent configurations, latency, and token usages per iteration.
 - **Kaggle Submissions**: The `auto_kaggle_submit` setting in `config.yaml` controls automated API submissions. If set to `"always"`, the pipeline submits to Kaggle on every successful execution that generates a valid prediction file. If set to `"best"`, it submits only when the local CV score strictly beats the historical best. The automated submission message dynamically includes the short Git commit SHA ID of the codebase that generated it, ensuring precise code provenance.

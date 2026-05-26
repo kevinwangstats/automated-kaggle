@@ -35,6 +35,16 @@ def setup_logger():
 
 logger = setup_logger()
 
+def log_info(msg: str):
+    logger.info(msg)
+
+def enable_file_logging(log_file_path: str = "automl.log"):
+    fh = logging.FileHandler(log_file_path)
+    fh.setLevel(logging.INFO)
+    formatter = logging.Formatter('[%(levelname)s] %(message)s')
+    fh.setFormatter(formatter)
+    logger.addHandler(fh)
+
 def log_stage(stage_name: str):
     logger.info(f"--- STAGE: {stage_name} ---")
 

@@ -17,7 +17,8 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.base import clone
 from sklearn.metrics import roc_auc_score, get_scorer, accuracy_score, f1_score, confusion_matrix
-from logger import log_stage, log_metric, log_error, suppress_stdout_stderr
+from logger import log_stage, log_metric, log_error, log_info, suppress_stdout_stderr
+from utils import clean_column_names
 from h2o.sklearn import H2OAutoMLClassifier, H2OAutoMLRegressor
 import os
 import re
@@ -31,16 +32,16 @@ def create_template_script(dataset_path: str, target_col: str, best_model_name: 
     except Exception:
         registry = {'models': {}}
 
-    imports_str = "\n".join([cfg["imports"] for cfg in registry['models'].values()])
-
-    init_block = "models = []\n"
-    for name, cfg in registry['models'].items():
-        init_block += f"    try:\n"
-        init_block += f"        if task == 'classification':\n"
-        init_block += f"            models.append(('{name}', {cfg['classifier']}))\n"
-        init_block += f"        else:\n"
-        init_block += f"            models.append(('{name}', {cfg['regressor']}))\n"
-        init_block += f"    except Exception: pass\n"
+    if best_model_name in registry['models']:
+        model_cfg = registry['models'][best_model_name]
+        imports_str = model_cfg["imports"]
+        init_block = f"if task == 'classification':\n"
+        init_block += f"        model = {model_cfg['classifier']}\n"
+        init_block += f"    else:\n"
+        init_block += f"        model = {model_cfg['regressor']}\n"
+    else:
+        imports_str = "from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor"
+        init_block = "if task == 'classification':\n        model = RandomForestClassifier(random_state=42)\n    else:\n        model = RandomForestRegressor(random_state=42)\n"
 
     metric_str = f"'{custom_metric}'" if custom_metric else "('roc_auc' if task == 'classification' else 'neg_mean_squared_error')"
     nrows_str = f"nrows={max_rows}" if max_rows is not None else "nrows=None"
@@ -52,27 +53,18 @@ import json
 import os
 import re
 import argparse
+import warnings
 from sklearn.model_selection import KFold, cross_val_score
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import make_scorer, roc_auc_score, mean_squared_error
-from sklearn.ensemble import VotingClassifier, VotingRegressor
 {imports_str}
 from pathlib import Path
 from tqdm import tqdm
+from utils import load_config, clean_column_names
 
-def load_config(config_path="config.yaml"):
-    with open(config_path, "r") as f:
-        config = yaml.safe_load(f)
-    # Resolve relative dataset paths against the repo root (passed via env var),
-    # NOT the config file directory, since configs may live in subdirectories.
-    repo_root = Path(os.environ.get("REPO_ROOT", Path.cwd()))
-    if config.get("dataset_path") and not Path(config.get("dataset_path")).is_absolute():
-        config["dataset_path"] = str(repo_root / config["dataset_path"])
-    if config.get("test_path") and not Path(config.get("test_path")).is_absolute():
-        config["test_path"] = str(repo_root / config["test_path"])
-    return config
+warnings.filterwarnings('ignore')
 
 def train_and_evaluate(config_path="config.yaml", output_dir="."):
     # 1. Load Configuration & Data
@@ -88,7 +80,7 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     y_raw = df[target_col]
     X = df.drop(columns=[target_col])
     
-    X.columns = [re.sub(r'[^\\w\\s]', '', col).replace(' ', '_') for col in X.columns]
+    X = clean_column_names(X)
     
     task = 'classification' if y_raw.nunique() < 20 else 'regression'
     if task == 'classification':
@@ -112,17 +104,12 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         remainder='passthrough'
     )
 
-    # 3. Model Initialization (Multi-Model Ensemble)
+    # 3. Model Initialization
     {init_block}
-    if not models: raise RuntimeError("No models could be initialized.")
-    if task == 'classification':
-        ensemble = VotingClassifier(estimators=models, voting='soft')
-    else:
-        ensemble = VotingRegressor(estimators=models)
 
     # 4. Create Full Pipeline
     pipeline = Pipeline(steps=[('preprocessor', preprocessor),
-                               ('classifier', ensemble)])
+                               ('classifier', model)])
     
     # 5. Cross Validation
     cv = KFold(n_splits=5, shuffle=True, random_state=42)
@@ -202,7 +189,7 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
         X = df.drop(columns=[target_col])
         
         # Clean column names to avoid LightGBM JSON errors
-        X.columns = [re.sub(r'[^\w\s]', '', col).replace(' ', '_') for col in X.columns]
+        X = clean_column_names(X)
         
         task = 'classification' if y_raw.nunique() < 20 else 'regression'
         if task == 'classification':
@@ -300,19 +287,19 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
                             
                         metric_reports[m_name] = report
                 except Exception as e:
-                    print(f"Failed to evaluate {m_name}: {e}")
+                    log_info(f"Failed to evaluate {m_name}: {e}")
                     pass
         
         # Print detailed reports outside the suppression block
         if metric_reports:
-            print("\n" + "="*30)
+            log_info("\n" + "="*30)
             if len(np.unique(y)) == 2:
-                print("DETAILED BASELINE METRICS (Binary Classification)")
+                log_info("DETAILED BASELINE METRICS (Binary Classification)")
             else:
-                print("DETAILED BASELINE METRICS (Multi-class Classification)")
+                log_info("DETAILED BASELINE METRICS (Multi-class Classification)")
             for r in metric_reports.values():
-                print(r)
-            print("="*30 + "\n")
+                log_info(r)
+            log_info("="*30 + "\n")
                 
         if not results:
             raise ValueError("All baseline models failed to evaluate.")
