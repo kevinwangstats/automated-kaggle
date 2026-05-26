@@ -5,109 +5,41 @@ import json
 import os
 import re
 import argparse
-import warnings
-from sklearn.model_selection import KFold, StratifiedKFold
-from sklearn.preprocessing import LabelEncoder
-from sklearn.base import clone, TransformerMixin, BaseEstimator
-from sklearn.metrics import roc_auc_score, mean_squared_error
 from pathlib import Path
-from tqdm import tqdm
-from utils import load_config, clean_column_names
+from sklearn.model_selection import KFold, cross_val_score
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler, FunctionTransformer
+from sklearn.impute import SimpleImputer
+from sklearn.compose import ColumnTransformer, make_column_selector
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import roc_auc_score
+from sklearn.ensemble import StackingClassifier, StackingRegressor
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.linear_model import RidgeClassifier, Ridge, LogisticRegression
+from xgboost import XGBClassifier, XGBRegressor
+from lightgbm import LGBMClassifier, LGBMRegressor
+from catboost import CatBoostClassifier, CatBoostRegressor
 
-warnings.filterwarnings('ignore')
+def load_config(config_path="config.yaml"):
+    with open(config_path, "r") as f:
+        config = yaml.safe_load(f)
+    repo_root = Path(os.environ.get("REPO_ROOT", Path.cwd()))
+    if config.get("dataset_path") and not Path(config.get("dataset_path")).is_absolute():
+        config["dataset_path"] = str(repo_root / config["dataset_path"])
+    if config.get("test_path") and not Path(config.get("test_path")).is_absolute():
+        config["test_path"] = str(repo_root / config["test_path"])
+    return config
 
-try:
-    from catboost import CatBoostClassifier, CatBoostRegressor
-    CATBOOST_AVAILABLE = True
-except Exception:
-    CATBOOST_AVAILABLE = False
-
-try:
-    from xgboost import XGBClassifier, XGBRegressor
-    XGBOOST_AVAILABLE = True
-except Exception:
-    XGBOOST_AVAILABLE = False
-
-
-class GenericFeatureEngineer(TransformerMixin, BaseEstimator):
-    def __init__(self, cat_rare_threshold=20):
-        self.cat_rare_threshold = cat_rare_threshold
-        self.missing_cols = []
-        self.cat_cols = []
-        self.num_cols = []
-        self.freq_maps = {}
-        self.rare_maps = {}
-        self.num_medians = {}
-
-    def fit(self, X, y=None):
-        X = pd.DataFrame(X)
-        self.missing_cols = [c for c in X.columns if X[c].isnull().any()]
-        self.cat_cols = X.select_dtypes(include=['object', 'category']).columns.tolist()
-        self.num_cols = X.select_dtypes(include=np.number).columns.tolist()
-
-        for col in self.cat_cols:
-            vc = X[col].value_counts(dropna=False)
-            self.freq_maps[col] = vc.to_dict()
-            if len(vc) > self.cat_rare_threshold:
-                keep = set(vc.head(self.cat_rare_threshold).index.tolist())
-            else:
-                keep = set(vc.index.tolist())
-            self.rare_maps[col] = keep
-
-        for col in self.num_cols:
-            self.num_medians[col] = X[col].median()
-        return self
-
-    def transform(self, X):
-        X = pd.DataFrame(X).copy()
-
-        # Missingness indicators
-        for col in self.missing_cols:
-            if col in X.columns:
-                X[f"{col}_is_missing"] = X[col].isnull().astype(np.int8)
-            else:
-                X[f"{col}_is_missing"] = 0
-
-        # Categorical engineering
-        for col in self.cat_cols:
-            if col not in X.columns:
-                continue
-            keep_vals = self.rare_maps.get(col, set())
-            is_common_or_null = X[col].isin(keep_vals) | X[col].isnull()
-            X[col] = X[col].where(is_common_or_null, '__rare__')
-
-            # String-derived numeric features
-            if X[col].notna().any():
-                str_ser = X[col].astype(object).fillna('').astype(str).replace(['nan', 'None', '<NA>', 'NaN'], '')
-                X[f"{col}_len"] = str_ser.str.len()
-                X[f"{col}_wc"] = str_ser.str.split().str.len().fillna(0)
-            else:
-                X[f"{col}_len"] = 0
-                X[f"{col}_wc"] = 0
-
-            # Frequency encoding
-            X[f"{col}_freq"] = X[col].map(self.freq_maps.get(col, {})).fillna(0)
-
-            # FIX: Convert NaN to explicit string placeholder so CatBoost accepts the column
-            X[col] = X[col].fillna('__missing__')
-
-        # Numeric imputation
-        for col in self.num_cols:
-            if col in X.columns:
-                X[col] = X[col].fillna(self.num_medians.get(col, 0))
-
-        # Generic numeric interactions (original numerics only)
-        if len(self.num_cols) >= 2:
-            for i in range(len(self.num_cols)):
-                for j in range(i + 1, len(self.num_cols)):
-                    c1, c2 = self.num_cols[i], self.num_cols[j]
-                    if c1 in X.columns and c2 in X.columns:
-                        X[f"{c1}_mul_{c2}"] = X[c1] * X[c2]
-                        denom = X[c2].replace(0, np.nan)
-                        X[f"{c1}_div_{c2}"] = (X[c1] / denom).fillna(0)
-
-        return X
-
+def _add_features(X_df):
+    """Generic dataset-agnostic feature engineering."""
+    X = X_df.copy()
+    # For categorical/text columns, add length and missing indicator
+    for col in X.select_dtypes(include=['object', 'category', 'string']).columns:
+        X[f"{col}_len"] = X[col].astype(str).replace('nan', '').str.len()
+        X[f"{col}_missing"] = X[col].isnull().astype(int)
+    # For numeric columns, add missing indicator
+    for col in X.select_dtypes(include=np.number).columns:
+        X[f"{col}_missing"] = X[col].isnull().astype(int)
+    return X
 
 def train_and_evaluate(config_path="config.yaml", output_dir="."):
     # 1. Load Configuration & Data
@@ -115,150 +47,129 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     dataset_path = config.get("dataset_path")
     target_col = config.get("target_col")
     test_path = config.get("test_path")
+    nrows = config.get("max_rows")
 
-    nrows = config.get("nrows", None)
     df = pd.read_csv(dataset_path, nrows=nrows)
-
+    
+    # Basic Preprocessing
     df = df.dropna(subset=[target_col])
     y_raw = df[target_col]
     X = df.drop(columns=[target_col])
-    X = clean_column_names(X)
-
+    
+    # Sanitize column names
+    X.columns = [re.sub(r'[^\w\s]', '', col).replace(' ', '_') for col in X.columns]
+    
     task = 'classification' if y_raw.nunique() < 20 else 'regression'
     if task == 'classification':
         le_y = LabelEncoder()
         y = le_y.fit_transform(y_raw)
-        n_classes = len(np.unique(y))
     else:
         y = y_raw.values
-        n_classes = None
 
-    # 2. Initialize models
-    models = {}
+    # Determine original categorical columns before feature engineering
+    cat_cols = list(X.select_dtypes(include=['object', 'category', 'string']).columns)
+
+    # 2. Define Preprocessing Pipeline
+    transformers = [
+        ('num', Pipeline([
+            ('imputer', SimpleImputer(strategy='median')),
+            ('scaler', StandardScaler())
+        ]), make_column_selector(dtype_include=np.number)),
+    ]
+    if len(cat_cols) > 0:
+        transformers.append(
+            ('cat', Pipeline([
+                ('imputer', SimpleImputer(strategy='most_frequent')),
+                ('ohe', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
+            ]), cat_cols)
+        )
+
+    preprocessor = ColumnTransformer(transformers=transformers, remainder='drop')
+
+    # 3. Model Initialization (Stacking Ensemble)
     if task == 'classification':
-        if CATBOOST_AVAILABLE:
-            models['catboost'] = CatBoostClassifier(
-                iterations=2000,
-                depth=4,
-                learning_rate=0.03,
-                l2_leaf_reg=3,
-                random_strength=1,
-                bagging_temperature=0.5,
-                random_seed=42,
-                verbose=False,
-                early_stopping_rounds=150,
+        estimators = [
+            ('xgb', XGBClassifier(
+                n_estimators=800, max_depth=4, learning_rate=0.03,
+                subsample=0.8, colsample_bytree=0.8, min_child_weight=3,
+                gamma=0.1, reg_alpha=0.01, reg_lambda=1.0,
+                random_state=42, n_jobs=-1, eval_metric='logloss'
+            )),
+            ('lgb', LGBMClassifier(
+                n_estimators=800, max_depth=6, learning_rate=0.03,
+                num_leaves=31, subsample=0.8, colsample_bytree=0.8,
+                reg_alpha=0.01, reg_lambda=1.0,
+                random_state=42, verbose=-1, n_jobs=-1
+            )),
+            ('cat', CatBoostClassifier(
+                iterations=800, depth=6, learning_rate=0.03,
+                l2_leaf_reg=3.0, border_count=254,
+                random_seed=42, verbose=False, thread_count=-1,
                 loss_function='Logloss'
-            )
-        if XGBOOST_AVAILABLE:
-            models['xgboost'] = XGBClassifier(
-                n_estimators=2000,
-                max_depth=3,
-                learning_rate=0.03,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                gamma=0.1,
-                reg_alpha=0.1,
-                reg_lambda=1.0,
-                random_state=42,
-                use_label_encoder=False,
-                eval_metric='logloss',
-                n_jobs=-1
-            )
+            )),
+            ('ridge', CalibratedClassifierCV(
+                RidgeClassifier(random_state=42), method='sigmoid', cv=3
+            ))
+        ]
+        ensemble = StackingClassifier(
+            estimators=estimators,
+            final_estimator=LogisticRegression(max_iter=2000, random_state=42),
+            passthrough=False,
+            stack_method='predict_proba',
+            cv=3,
+            n_jobs=1
+        )
+        metric = config.get("metric", "roc_auc")
     else:
-        if CATBOOST_AVAILABLE:
-            models['catboost'] = CatBoostRegressor(
-                iterations=2000,
-                depth=4,
-                learning_rate=0.03,
-                l2_leaf_reg=3,
-                random_seed=42,
-                verbose=False,
-                early_stopping_rounds=150
-            )
-        if XGBOOST_AVAILABLE:
-            models['xgboost'] = XGBRegressor(
-                n_estimators=2000,
-                max_depth=3,
-                learning_rate=0.03,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                random_state=42,
-                n_jobs=-1
-            )
+        estimators = [
+            ('xgb', XGBRegressor(
+                n_estimators=800, max_depth=4, learning_rate=0.03,
+                subsample=0.8, colsample_bytree=0.8, min_child_weight=3,
+                gamma=0.1, reg_alpha=0.01, reg_lambda=1.0,
+                random_state=42, n_jobs=-1
+            )),
+            ('lgb', LGBMRegressor(
+                n_estimators=800, max_depth=6, learning_rate=0.03,
+                num_leaves=31, subsample=0.8, colsample_bytree=0.8,
+                reg_alpha=0.01, reg_lambda=1.0,
+                random_state=42, verbose=-1, n_jobs=-1
+            )),
+            ('cat', CatBoostRegressor(
+                iterations=800, depth=6, learning_rate=0.03,
+                l2_leaf_reg=3.0, border_count=254,
+                random_seed=42, verbose=False, thread_count=-1,
+                loss_function='RMSE'
+            )),
+            ('ridge', Ridge(random_state=42))
+        ]
+        ensemble = StackingRegressor(
+            estimators=estimators,
+            final_estimator=Ridge(random_state=42),
+            passthrough=False,
+            cv=3,
+            n_jobs=1
+        )
+        metric = config.get("metric", "neg_mean_squared_error")
 
-    if not models:
-        raise ImportError("No suitable models are available.")
-
-    # 3. Cross Validation
-    if task == 'classification':
-        cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-    else:
-        cv = KFold(n_splits=5, shuffle=True, random_state=42)
-
-    scores = []
-    print(f"Running Cross-Validation (folds=5)...")
-
-    for train_idx, val_idx in tqdm(list(cv.split(X, y)), desc="CV Progress"):
-        X_train_raw, X_val_raw = X.iloc[train_idx].copy(), X.iloc[val_idx].copy()
-        y_train, y_val = y[train_idx], y[val_idx]
-
-        prep = GenericFeatureEngineer(cat_rare_threshold=20)
-        X_train = prep.fit_transform(X_train_raw)
-        X_val = prep.transform(X_val_raw)
-
-        cat_features = [c for c in prep.cat_cols if c in X_train.columns]
-
-        fold_preds = []
-
-        # CatBoost
-        if 'catboost' in models:
-            model_cb = clone(models['catboost'])
-            model_cb.fit(
-                X_train, y_train,
-                cat_features=cat_features,
-                eval_set=(X_val, y_val),
-                verbose=False
-            )
-            if task == 'classification':
-                if n_classes == 2:
-                    fold_preds.append(model_cb.predict_proba(X_val)[:, 1])
-                else:
-                    fold_preds.append(model_cb.predict_proba(X_val)[:, 1])
-            else:
-                fold_preds.append(model_cb.predict(X_val))
-
-        # XGBoost (drop raw categoricals; use engineered numerics only)
-        if 'xgboost' in models:
-            drop_cols = [c for c in cat_features if c in X_train.columns]
-            X_train_xgb = X_train.drop(columns=drop_cols, errors='ignore')
-            X_val_xgb = X_val.drop(columns=drop_cols, errors='ignore')
-
-            model_xgb = clone(models['xgboost'])
-            model_xgb.fit(
-                X_train_xgb, y_train,
-                eval_set=[(X_val_xgb, y_val)],
-                verbose=False
-            )
-            if task == 'classification':
-                if n_classes == 2:
-                    fold_preds.append(model_xgb.predict_proba(X_val_xgb)[:, 1])
-                else:
-                    fold_preds.append(model_xgb.predict_proba(X_val_xgb)[:, 1])
-            else:
-                fold_preds.append(model_xgb.predict(X_val_xgb))
-
-        # Ensemble averaging
-        if len(fold_preds) > 1:
-            y_pred = np.mean(fold_preds, axis=0)
-        else:
-            y_pred = fold_preds[0]
-
-        if task == 'classification':
-            score = roc_auc_score(y_val, y_pred)
-        else:
-            score = mean_squared_error(y_val, y_pred, squared=False)
-
-        scores.append(score)
+    # 4. Create Full Pipeline
+    pipeline = Pipeline(steps=[
+        ('fe', FunctionTransformer(func=_add_features, validate=False)),
+        ('preprocessor', preprocessor),
+        ('ensemble', ensemble)
+    ])
+    
+    # 5. Cross Validation
+    cv = KFold(n_splits=5, shuffle=True, random_state=42)
+    if metric is None:
+        metric = 'roc_auc' if task == 'classification' else 'neg_mean_squared_error'
+    
+    print(f"Running Cross-Validation (folds=5, metric={metric})...")
+    try:
+        scores = cross_val_score(pipeline, X, y, cv=cv, scoring=metric, n_jobs=1)
+    except Exception as e:
+        print(f"Warning: requested metric '{metric}' failed ({e}). Falling back to default.")
+        metric = 'roc_auc' if task == 'classification' else 'neg_mean_squared_error'
+        scores = cross_val_score(pipeline, X, y, cv=cv, scoring=metric, n_jobs=1)
 
     final_score = float(np.mean(scores))
     output_path = Path(output_dir)
@@ -266,58 +177,35 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     with open(output_path / "metrics.json", "w") as f:
         json.dump({"cv_score": final_score}, f)
 
-    # 4. Generate Submission
+    # 6. Generate Submission (if test_path is provided)
     if test_path and Path(test_path).exists():
         print("Generating submission...")
+        pipeline.fit(X, y)
+        test_df = pd.read_csv(test_path)
+        
+        # Preserve original ID column (first column)
+        test_id = test_df.iloc[:, 0].copy()
+        
+        # Prepare test features to match training feature set
+        test_X = test_df.copy()
+        if target_col in test_X.columns:
+            test_X = test_X.drop(columns=[target_col])
+        test_X.columns = [re.sub(r'[^\w\s]', '', col).replace(' ', '_') for col in test_X.columns]
+        test_X = test_X.reindex(columns=X.columns, fill_value=np.nan)
 
-        test_df_raw = pd.read_csv(test_path)
-        id_col_name = test_df_raw.columns[0]
-        id_values = test_df_raw.iloc[:, 0].copy()
-
-        test_df = test_df_raw.copy()
-        test_df = clean_column_names(test_df)
-        test_X = test_df[X.columns.intersection(test_df.columns)]
-
-        prep_full = GenericFeatureEngineer(cat_rare_threshold=20)
-        X_full = prep_full.fit_transform(X)
-        test_X_t = prep_full.transform(test_X)
-        cat_features = [c for c in prep_full.cat_cols if c in X_full.columns]
-
-        submission_preds = []
-
-        if 'catboost' in models:
-            model_cb_full = clone(models['catboost'])
-            model_cb_full.fit(X_full, y, cat_features=cat_features, verbose=False)
-            if task == 'classification':
-                submission_preds.append(model_cb_full.predict_proba(test_X_t)[:, 1])
-            else:
-                submission_preds.append(model_cb_full.predict(test_X_t))
-
-        if 'xgboost' in models:
-            drop_cols = [c for c in cat_features if c in X_full.columns]
-            X_full_xgb = X_full.drop(columns=drop_cols, errors='ignore')
-            test_X_xgb = test_X_t.drop(columns=drop_cols, errors='ignore')
-            model_xgb_full = clone(models['xgboost'])
-            model_xgb_full.fit(X_full_xgb, y, verbose=False)
-            if task == 'classification':
-                submission_preds.append(model_xgb_full.predict_proba(test_X_xgb)[:, 1])
-            else:
-                submission_preds.append(model_xgb_full.predict(test_X_xgb))
-
-        if len(submission_preds) > 1:
-            preds = np.mean(submission_preds, axis=0)
+        if task == 'classification':
+            preds = pipeline.predict_proba(test_X)[:, 1]
         else:
-            preds = submission_preds[0]
-
+            preds = pipeline.predict(test_X)
+            
         submission = pd.DataFrame({
-            id_col_name: id_values,
+            test_df.columns[0]: test_id,
             target_col: preds
         })
         submission.to_csv(output_path / "raw_submission.csv", index=False)
         print("Saved raw_submission.csv")
 
     return final_score
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
