@@ -6,7 +6,7 @@ import os
 import re
 import argparse
 from pathlib import Path
-from sklearn.model_selection import KFold, cross_val_score
+from sklearn.model_selection import StratifiedKFold, KFold, cross_val_score
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler, FunctionTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.compose import ColumnTransformer, make_column_selector
@@ -24,21 +24,33 @@ def load_config(config_path="config.yaml"):
         config = yaml.safe_load(f)
     repo_root = Path(os.environ.get("REPO_ROOT", Path.cwd()))
     if config.get("dataset_path") and not Path(config.get("dataset_path")).is_absolute():
-        config["dataset_path"] = str(repo_root / config["dataset_path"])
+        config["dataset_path"] = str(repo_root / config.get("dataset_path"))
     if config.get("test_path") and not Path(config.get("test_path")).is_absolute():
-        config["test_path"] = str(repo_root / config["test_path"])
+        config["test_path"] = str(repo_root / config.get("test_path"))
     return config
 
 def _add_features(X_df):
     """Generic dataset-agnostic feature engineering."""
     X = X_df.copy()
-    # For categorical/text columns, add length and missing indicator
+    # Categorical/text columns: length, missing indicator, frequency encoding
     for col in X.select_dtypes(include=['object', 'category', 'string']).columns:
         X[f"{col}_len"] = X[col].astype(str).replace('nan', '').str.len()
         X[f"{col}_missing"] = X[col].isnull().astype(int)
-    # For numeric columns, add missing indicator
+        freq = X[col].value_counts(dropna=False, normalize=True)
+        X[f"{col}_freq"] = X[col].map(freq).astype(float)
+    # Numeric columns: missing indicator
     for col in X.select_dtypes(include=np.number).columns:
         X[f"{col}_missing"] = X[col].isnull().astype(int)
+    # Row-wise aggregates on all numeric columns (original + engineered)
+    num_cols = list(X.select_dtypes(include=np.number).columns)
+    if len(num_cols) > 0:
+        X['row_num_mean'] = X[num_cols].mean(axis=1)
+        X['row_num_std'] = X[num_cols].std(axis=1)
+        X['row_num_max'] = X[num_cols].max(axis=1)
+        X['row_num_min'] = X[num_cols].min(axis=1)
+        missing_cols = [c for c in X.columns if c.endswith('_missing')]
+        if missing_cols:
+            X['row_missing_total'] = X[missing_cols].sum(axis=1)
     return X
 
 def train_and_evaluate(config_path="config.yaml", output_dir="."):
@@ -79,7 +91,7 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     if len(cat_cols) > 0:
         transformers.append(
             ('cat', Pipeline([
-                ('imputer', SimpleImputer(strategy='most_frequent')),
+                ('imputer', SimpleImputer(strategy='constant', fill_value='MISSING')),
                 ('ohe', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
             ]), cat_cols)
         )
@@ -88,21 +100,27 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
 
     # 3. Model Initialization (Stacking Ensemble)
     if task == 'classification':
+        pos = np.sum(y == 1)
+        neg = np.sum(y == 0)
+        scale_pos_weight = float(neg) / float(pos) if pos > 0 else 1.0
+
         estimators = [
             ('xgb', XGBClassifier(
-                n_estimators=800, max_depth=4, learning_rate=0.03,
-                subsample=0.8, colsample_bytree=0.8, min_child_weight=3,
-                gamma=0.1, reg_alpha=0.01, reg_lambda=1.0,
+                n_estimators=1500, max_depth=4, learning_rate=0.02,
+                subsample=0.8, colsample_bytree=0.8, min_child_weight=1,
+                gamma=0.05, reg_alpha=0.01, reg_lambda=1.0,
+                scale_pos_weight=scale_pos_weight,
                 random_state=42, n_jobs=-1, eval_metric='logloss'
             )),
             ('lgb', LGBMClassifier(
-                n_estimators=800, max_depth=6, learning_rate=0.03,
-                num_leaves=31, subsample=0.8, colsample_bytree=0.8,
+                n_estimators=1500, max_depth=6, learning_rate=0.02,
+                num_leaves=47, subsample=0.8, colsample_bytree=0.8,
                 reg_alpha=0.01, reg_lambda=1.0,
+                class_weight='balanced',
                 random_state=42, verbose=-1, n_jobs=-1
             )),
             ('cat', CatBoostClassifier(
-                iterations=800, depth=6, learning_rate=0.03,
+                iterations=1500, depth=6, learning_rate=0.02,
                 l2_leaf_reg=3.0, border_count=254,
                 random_seed=42, verbose=False, thread_count=-1,
                 loss_function='Logloss'
@@ -113,29 +131,29 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         ]
         ensemble = StackingClassifier(
             estimators=estimators,
-            final_estimator=LogisticRegression(max_iter=2000, random_state=42),
+            final_estimator=LogisticRegression(max_iter=2000, random_state=42, C=0.5),
             passthrough=False,
             stack_method='predict_proba',
-            cv=3,
+            cv=5,
             n_jobs=1
         )
         metric = config.get("metric", "roc_auc")
     else:
         estimators = [
             ('xgb', XGBRegressor(
-                n_estimators=800, max_depth=4, learning_rate=0.03,
-                subsample=0.8, colsample_bytree=0.8, min_child_weight=3,
-                gamma=0.1, reg_alpha=0.01, reg_lambda=1.0,
+                n_estimators=1500, max_depth=4, learning_rate=0.02,
+                subsample=0.8, colsample_bytree=0.8, min_child_weight=1,
+                gamma=0.05, reg_alpha=0.01, reg_lambda=1.0,
                 random_state=42, n_jobs=-1
             )),
             ('lgb', LGBMRegressor(
-                n_estimators=800, max_depth=6, learning_rate=0.03,
-                num_leaves=31, subsample=0.8, colsample_bytree=0.8,
+                n_estimators=1500, max_depth=6, learning_rate=0.02,
+                num_leaves=47, subsample=0.8, colsample_bytree=0.8,
                 reg_alpha=0.01, reg_lambda=1.0,
                 random_state=42, verbose=-1, n_jobs=-1
             )),
             ('cat', CatBoostRegressor(
-                iterations=800, depth=6, learning_rate=0.03,
+                iterations=1500, depth=6, learning_rate=0.02,
                 l2_leaf_reg=3.0, border_count=254,
                 random_seed=42, verbose=False, thread_count=-1,
                 loss_function='RMSE'
@@ -146,7 +164,7 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
             estimators=estimators,
             final_estimator=Ridge(random_state=42),
             passthrough=False,
-            cv=3,
+            cv=5,
             n_jobs=1
         )
         metric = config.get("metric", "neg_mean_squared_error")
@@ -159,7 +177,11 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     ])
     
     # 5. Cross Validation
-    cv = KFold(n_splits=5, shuffle=True, random_state=42)
+    if task == 'classification':
+        cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    else:
+        cv = KFold(n_splits=5, shuffle=True, random_state=42)
+        
     if metric is None:
         metric = 'roc_auc' if task == 'classification' else 'neg_mean_squared_error'
     
