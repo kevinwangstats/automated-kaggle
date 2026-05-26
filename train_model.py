@@ -7,11 +7,13 @@ import re
 import argparse
 import warnings
 from sklearn.model_selection import KFold, cross_val_score
-from sklearn.preprocessing import LabelEncoder, OneHotEncoder
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler
+from sklearn.impute import SimpleImputer
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
+from sklearn.base import clone
 from sklearn.metrics import make_scorer, roc_auc_score, mean_squared_error
-from catboost import CatBoostClassifier, CatBoostRegressor
+from sklearn.linear_model import RidgeClassifier, Ridge
 from pathlib import Path
 from tqdm import tqdm
 from utils import load_config, clean_column_names
@@ -50,17 +52,23 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
 
     preprocessor = ColumnTransformer(
         transformers=[
-            ('num', 'passthrough', numerical_features),
-            ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), categorical_features)
+            ('num', Pipeline(steps=[
+                ('imputer', SimpleImputer(strategy='median')),
+                ('scaler', StandardScaler())
+            ]), numerical_features),
+            ('cat', Pipeline(steps=[
+                ('imputer', SimpleImputer(strategy='most_frequent')),
+                ('ohe', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
+            ]), categorical_features)
         ],
-        remainder='passthrough'
+        remainder='drop'
     )
 
     # 3. Model Initialization
     if task == 'classification':
-        model = CatBoostClassifier(random_state=42, verbose=0, thread_count=-1)
+        model = RidgeClassifier(random_state=42)
     else:
-        model = CatBoostRegressor(random_state=42, verbose=0, thread_count=-1)
+        model = Ridge(random_state=42)
 
 
     # 4. Create Full Pipeline
@@ -78,14 +86,18 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
         y_train, y_val = y[train_idx], y[val_idx]
         
-        
         fold_pipeline = clone(pipeline)
         fold_pipeline.fit(X_train, y_train)
         
         # Scoring
         if task == 'classification':
             if scoring == 'roc_auc':
-                y_pred = fold_pipeline.predict_proba(X_val)[:, 1]
+                if hasattr(fold_pipeline, "predict_proba"):
+                    y_pred = fold_pipeline.predict_proba(X_val)[:, 1]
+                elif hasattr(fold_pipeline, "decision_function"):
+                    y_pred = fold_pipeline.decision_function(X_val)
+                else:
+                    y_pred = fold_pipeline.predict(X_val)
                 score = roc_auc_score(y_val, y_pred)
             else:
                 score = get_scorer(scoring)(fold_pipeline, X_val, y_val)
@@ -110,7 +122,12 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         test_X = test_df[X.columns.intersection(test_df.columns)]
 
         if task == 'classification':
-            preds = pipeline.predict_proba(test_X)[:, 1]
+            if hasattr(pipeline, "predict_proba"):
+                preds = pipeline.predict_proba(test_X)[:, 1]
+            elif hasattr(pipeline, "decision_function"):
+                preds = pipeline.decision_function(test_X)
+            else:
+                preds = pipeline.predict(test_X)
         else:
             preds = pipeline.predict(test_X)
             
