@@ -36,7 +36,7 @@ def setup_logger():
 logger = setup_logger()
 
 def log_info(msg: str):
-    logger.info(f"[Info] {msg}")
+    logger.info(msg)
 
 def enable_file_logging(log_file_path: str = "automl.log"):
     fh = logging.FileHandler(log_file_path)
