@@ -100,13 +100,28 @@ class GitManager:
             pass # Detached HEAD, continue with normal logic
 
         if dataset_branch == "main":
-            self.repo.git.checkout("main")
+            try:
+                self.repo.git.checkout("main")
+            except git.exc.GitCommandError as e:
+                if "already checked out" in str(e).lower() or "worktree" in str(e).lower():
+                    log_error(f"The branch 'main' is already checked out in another directory (git worktree).")
+                    raise
+                else:
+                    raise
             log_stage("Dataset path maps to branch 'main'; using main.")
             return
             
         head_names = [h.name for h in self.repo.heads]
         if dataset_branch in head_names:
-            self.repo.git.checkout(dataset_branch)
+            try:
+                self.repo.git.checkout(dataset_branch)
+            except git.exc.GitCommandError as e:
+                if "already checked out" in str(e).lower() or "worktree" in str(e).lower():
+                    log_error(f"[CRITICAL ERROR] The dataset branch '{dataset_branch}' is already checked out in another directory (git worktree).")
+                    log_info("Please navigate to your active worktree directory to run this model safely without conflict.")
+                    raise
+                else:
+                    raise
         else:
             self.repo.git.checkout("-b", dataset_branch, "main")
             
@@ -119,11 +134,26 @@ class GitManager:
         head_names = [h.name for h in self.repo.heads]
         if dataset_branch not in head_names:
             self.repo.git.branch(dataset_branch)
-        self.repo.git.checkout(dataset_branch)
+        try:
+            self.repo.git.checkout(dataset_branch)
+        except git.exc.GitCommandError as e:
+            if "already checked out" in str(e).lower() or "worktree" in str(e).lower():
+                log_error(f"The branch '{dataset_branch}' is already checked out in another directory.")
+                raise
+            else:
+                raise
         log_stage(f"Switched to dataset branch: {dataset_branch}")
 
     def checkout_branch(self, branch_name: str):
-        self.repo.git.checkout(branch_name)
+        try:
+            self.repo.git.checkout(branch_name)
+        except git.exc.GitCommandError as e:
+            if "already checked out" in str(e).lower() or "worktree" in str(e).lower():
+                log_error(f"[CRITICAL ERROR] The branch '{branch_name}' is already checked out in another directory (git worktree).")
+                log_info("Please navigate to your active worktree directory to run this model safely without conflict.")
+                raise
+            else:
+                raise
 
     def revert_changes(self):
         """Discards all local changes in the working directory."""
@@ -167,3 +197,12 @@ class GitManager:
             self.repo.git.branch('-D', branch_name)
         except Exception as e:
             log_error(f"Failed to delete branch {branch_name}", e)
+
+    def merge_main(self):
+        try:
+            log_stage("Merging latest 'main' into active branch...")
+            self.repo.git.merge('main')
+            log_stage("Successfully merged 'main'.")
+        except git.exc.GitCommandError as e:
+            log_error("Auto-merge of 'main' failed due to git conflicts. Please resolve manually or start fresh.", e)
+            raise

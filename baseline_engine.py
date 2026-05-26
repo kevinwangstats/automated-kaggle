@@ -8,18 +8,17 @@ Can be executed as an independent module to test baseline generation:
 import pandas as pd
 import numpy as np
 import yaml
-import h2o
 import wandb
 from tqdm import tqdm
 from sklearn.model_selection import KFold, cross_val_score, cross_val_predict
-from sklearn.preprocessing import LabelEncoder, OneHotEncoder
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler
+from sklearn.impute import SimpleImputer
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.base import clone
 from sklearn.metrics import roc_auc_score, get_scorer, accuracy_score, f1_score, confusion_matrix
 from logger import log_stage, log_metric, log_error, log_info, suppress_stdout_stderr
 from utils import clean_column_names
-from h2o.sklearn import H2OAutoMLClassifier, H2OAutoMLRegressor
 import os
 import re
 
@@ -55,9 +54,11 @@ import re
 import argparse
 import warnings
 from sklearn.model_selection import KFold, cross_val_score
-from sklearn.preprocessing import LabelEncoder, OneHotEncoder
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler
+from sklearn.impute import SimpleImputer
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
+from sklearn.base import clone
 from sklearn.metrics import make_scorer, roc_auc_score, mean_squared_error
 {imports_str}
 from pathlib import Path
@@ -98,10 +99,16 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
 
     preprocessor = ColumnTransformer(
         transformers=[
-            ('num', 'passthrough', numerical_features),
-            ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), categorical_features)
+            ('num', Pipeline(steps=[
+                ('imputer', SimpleImputer(strategy='median')),
+                ('scaler', StandardScaler())
+            ]), numerical_features),
+            ('cat', Pipeline(steps=[
+                ('imputer', SimpleImputer(strategy='most_frequent')),
+                ('ohe', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
+            ]), categorical_features)
         ],
-        remainder='passthrough'
+        remainder='drop'
     )
 
     # 3. Model Initialization
@@ -122,14 +129,18 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
         y_train, y_val = y[train_idx], y[val_idx]
         
-        
         fold_pipeline = clone(pipeline)
         fold_pipeline.fit(X_train, y_train)
         
         # Scoring
         if task == 'classification':
             if scoring == 'roc_auc':
-                y_pred = fold_pipeline.predict_proba(X_val)[:, 1]
+                if hasattr(fold_pipeline, "predict_proba"):
+                    y_pred = fold_pipeline.predict_proba(X_val)[:, 1]
+                elif hasattr(fold_pipeline, "decision_function"):
+                    y_pred = fold_pipeline.decision_function(X_val)
+                else:
+                    y_pred = fold_pipeline.predict(X_val)
                 score = roc_auc_score(y_val, y_pred)
             else:
                 score = get_scorer(scoring)(fold_pipeline, X_val, y_val)
@@ -154,7 +165,12 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         test_X = test_df[X.columns.intersection(test_df.columns)]
 
         if task == 'classification':
-            preds = pipeline.predict_proba(test_X)[:, 1]
+            if hasattr(pipeline, "predict_proba"):
+                preds = pipeline.predict_proba(test_X)[:, 1]
+            elif hasattr(pipeline, "decision_function"):
+                preds = pipeline.decision_function(test_X)
+            else:
+                preds = pipeline.predict(test_X)
         else:
             preds = pipeline.predict(test_X)
             
@@ -207,10 +223,16 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
         
         preprocessor = ColumnTransformer(
             transformers=[
-                ('num', 'passthrough', numerical_features),
-                ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), categorical_features)
+                ('num', Pipeline([
+                    ('imputer', SimpleImputer(strategy='median')),
+                    ('scaler', StandardScaler())
+                ]), numerical_features),
+                ('cat', Pipeline([
+                    ('imputer', SimpleImputer(strategy='most_frequent')),
+                    ('ohe', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
+                ]), categorical_features)
             ],
-            remainder='passthrough'
+            remainder='drop'
         )
 
         scoring = custom_metric if custom_metric else ('roc_auc' if task == 'classification' else 'neg_mean_squared_error')
@@ -238,26 +260,16 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
             except Exception:
                 pass
 
-            # H2O is kept here for evaluation, but omitted from the generated ensemble script
-            try:
-                H2OAutoMLClassifier._estimator_type = "classifier"
-                H2OAutoMLRegressor._estimator_type = "regressor"
-                h2o.init(verbose=False)
-                h2o_model = H2OAutoMLClassifier(max_models=3, seed=42) if task == 'classification' else H2OAutoMLRegressor(max_models=3, seed=42)
-                models_to_eval['h2o'] = h2o_model
-            except Exception: pass
-
             pbar = tqdm(models_to_eval.items(), desc="Evaluating Baselines")
             for m_name, model in pbar:
                 pbar.set_description(f"Evaluating {m_name.upper()}")
                 try:
                     pipeline = Pipeline(steps=[('preprocessor', preprocessor), ('classifier', model)])
-                    n_jobs = 1 if m_name == 'h2o' else -1
-                    scores = cross_val_score(pipeline, X, y, cv=cv, scoring=scoring, n_jobs=n_jobs)
+                    scores = cross_val_score(pipeline, X, y, cv=cv, scoring=scoring, n_jobs=-1)
                     results[m_name] = np.mean(scores)
                     
                     if task == 'classification':
-                        preds = cross_val_predict(pipeline, X, y, cv=cv, n_jobs=n_jobs)
+                        preds = cross_val_predict(pipeline, X, y, cv=cv, n_jobs=-1)
                         acc = accuracy_score(y, preds)
                         
                         report = f"--- {m_name.upper()} ---\n"
@@ -324,4 +336,3 @@ def evaluate_baselines(dataset_path: str, target_col: str, test_path: str = None
     except Exception as e:
         log_error("Baseline evaluation failed", e)
         raise
-

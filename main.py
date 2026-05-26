@@ -67,31 +67,48 @@ def main():
         workspace_mgr = WorkspaceManager(dataset_branch, root_dir=workspace_root)
         had_commits = bool(git_mgr.repo.heads)
         
-        if had_commits and git_mgr.is_on_main() and dataset_branch != "main":
+        if had_commits:
             if git_mgr.has_uncommitted_changes():
-                log_info("You have uncommitted changes on the 'main' branch.")
+                log_info("You have uncommitted changes on the active branch.")
                 log_info("You will not be running the latest software unless you commit.")
-                ans = input("Are you happy to git add all file changes, commit, and push before proceeding to work on the dataset branch? (y/n): ")
-                if ans.lower() == 'y':
-                    msg = input("Enter commit message: ")
-                    if not msg: msg = "Update core files"
-                    git_mgr.commit_all(msg)
-                    try:
-                        git_mgr.repo.remotes.origin.push()
-                        log_info("Pushed to origin.")
-                    except Exception as e:
-                        log_info(f"Push to origin skipped/failed: {e}")
+                if args.yes:
+                    log_info("Automatically committing all core changes...")
+                    git_mgr.commit_all("Auto-commit core updates in non-interactive mode")
                 else:
-                    log_info("Aborting. Please stash or commit your changes manually before proceeding to avoid conflicts.")
-                    sys.exit(1)
+                    if git_mgr.is_on_main() and dataset_branch != "main":
+                        ans = input("Are you happy to git add all file changes, commit, and push before proceeding to work on the dataset branch? (y/n): ")
+                        if ans.lower() == 'y':
+                            msg = input("Enter commit message: ")
+                            if not msg: msg = "Update core files"
+                            git_mgr.commit_all(msg)
+                            try:
+                                git_mgr.repo.remotes.origin.push()
+                                log_info("Pushed to origin.")
+                            except Exception as e:
+                                log_info(f"Push to origin skipped/failed: {e}")
+                        else:
+                            log_info("Aborting. Please stash or commit your changes manually before proceeding to avoid conflicts.")
+                            sys.exit(1)
             
-            if git_mgr.branch_exists(dataset_branch) and not git_mgr.is_branch_based_on_latest_main(dataset_branch):
+            if dataset_branch != "main" and git_mgr.branch_exists(dataset_branch) and not git_mgr.is_branch_based_on_latest_main(dataset_branch):
                 log_info(f"The dataset branch '{dataset_branch}' already exists, but it is not based off the latest commit on 'main'.")
                 log_info("You will not be running the latest software for this dataset.")
-                ans = input(f"Would you like to delete the '{dataset_branch}' branch by force to start fresh from the latest main? (y/n): ")
-                if ans.lower() == 'y':
-                    git_mgr.delete_branch(dataset_branch)
-                    log_info(f"Deleted outdated dataset branch '{dataset_branch}'.")
+                if args.yes:
+                    log_info("Non-interactive mode active: attempting to merge 'main' branch automatically.")
+                    # Switch to the dataset branch first so we can merge main into it
+                    git_mgr.ensure_dataset_branch(dataset_branch)
+                    try:
+                        git_mgr.merge_main()
+                    except Exception:
+                        log_info(f"Failed to merge main into '{dataset_branch}'. Force-deleting the outdated branch to start fresh from latest main.")
+                        git_mgr.checkout_branch("main")
+                        git_mgr.delete_branch(dataset_branch)
+                        git_mgr.ensure_dataset_branch(dataset_branch)
+                else:
+                    ans = input(f"Would you like to delete the '{dataset_branch}' branch by force to start fresh from the latest main? (y/n): ")
+                    if ans.lower() == 'y':
+                        git_mgr.delete_branch(dataset_branch)
+                        log_info(f"Deleted outdated dataset branch '{dataset_branch}'.")
 
         # Checkout dataset branch to reveal tracked files
         if had_commits:
