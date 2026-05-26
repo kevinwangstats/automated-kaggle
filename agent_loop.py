@@ -216,8 +216,19 @@ def run_agent_loop(
         current_script = read_file(script_path)
         memory_string = _build_agent_memory(history)
 
+        # Determine Cognitive State
+        last_run_failed = False
+        if history:
+            last_run = history[-1]
+            if last_run.get('error'):
+                error_str = str(last_run['error'])
+                # Only trigger strict Debug Mode for script execution failures, not LLM API timeouts
+                if "Script Execution Failed" in error_str or "Traceback" in error_str or "SyntaxError" in error_str:
+                    last_run_failed = True
+
         models_str = ", ".join(available_models) if available_models else "None specifically defined in registry"
-        prompt = f"""You are an expert AI Data Scientist. Improve the Cross-Validation score of the model.
+        
+        base_prompt = f"""You are an expert AI Data Scientist. Improve the Cross-Validation score of the model.
 
 RULES (your script MUST follow ALL of these):
 1. DATASET-AGNOSTIC: Read `dataset_path`, `target_col`, `test_path` from config. Never hardcode column names or file paths.
@@ -233,13 +244,27 @@ MODELING FREEDOM:
 - Available registry models: {models_str}. You may tune their hyperparameters but do not hallucinate imports for models outside this list unless confident they are installed.
 
 {memory_string}
-
-PRIORITIES:
-1. FIX ERRORS FIRST: If agent memory shows a traceback, your exclusive priority is debugging. Do not add features until errors are resolved.
-2. IMPROVE SCORE: If the previous run succeeded, improve via feature engineering, hyperparameter tuning, or architecture changes.
-
-Output ONLY the full modified Python code in ```python ... ``` blocks. No other text.
 """
+
+        if last_run_failed:
+            mission_prompt = f"""MISSION (DEBUG MODE - CRITICAL):
+The previous execution crashed with the error shown in the memory above.
+Your EXCLUSIVE priority is to debug and fix the script so it executes successfully.
+
+DO NOT attempt to add new features, swap models, or optimize the score in this turn.
+
+DO NOT take the "lazy fix" by simply deleting the lines of code that caused the error. You must logically repair the code (e.g., add .astype(str), .fillna(), or correct the matrix dimensions) so the intended feature or logic works.
+Output ONLY the full fixed Python code wrapped in ```python ... ``` blocks. No other text.
+"""
+        else:
+            mission_prompt = f"""MISSION (OPTIMIZE MODE):
+The previous run succeeded. Your goal is to propose a modified version of the script to improve the Cross-Validation score.
+
+You may perform feature engineering, handle missing values better, tune hyperparameters, or change the ensemble architecture.
+Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. No other text.
+"""
+        
+        prompt = base_prompt + "\n" + mission_prompt
         
         if not skip_confirmation:
             log_info(f"Preparing to call LLM for iteration {i}.")

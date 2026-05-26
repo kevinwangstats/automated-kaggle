@@ -19,6 +19,9 @@ To maximize API efficiency, prevent infinite loops, and reduce token bloat, the 
 - **Semantic Memory**: The orchestrator no longer passes raw code history (prompts and responses) into the LLM context. Instead, it maintains a distilled "Memory String" summarizing only the outcomes and the agent's extracted reasoning from the last 3 runs. This saves significant tokens and forces the agent to maintain focus on high-level strategies rather than drowning in thousands of lines of previous code.
 - **API Defense (Transient vs. Fatal)**: API calls are wrapped in robust litellm exception handlers. **Fatal errors** (e.g., 400 Bad Request, 401 Authentication Error) immediately halt the pipeline to prevent infinite loops and save costs. **Transient Timeouts** trigger an automatic, temporary fallback to `gemini-2.5-flash` to ensure the pipeline continues iterating smoothly.
 
+### Dual-Mode Cognitive State Machine
+To prevent LLM attention dilution, the agent orchestrator utilizes a state machine. If the script is stable, it enters Optimize Mode, focusing entirely on feature engineering and hyperparameter tuning. If the script crashes, it enters a strict Debug Mode. In Debug Mode, the prompt explicitly forbids adding new features and mandates that the agent must repair the broken logic rather than taking the lazy route of deleting it.
+
 ## Git Branches and Worktree Architecture
 
 This project enforces a strictly data-agnostic workflow using **Git Worktrees**. The core codebase remains on `main` in the primary repository directory, while data-specific iterations and configurations are isolated to dataset branches checked out into parallel sibling directories.
