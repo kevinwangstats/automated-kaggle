@@ -96,7 +96,7 @@ def main():
                 if args.yes:
                     log_info("Non-interactive mode active: attempting to merge 'main' branch automatically.")
                     # Switch to the dataset branch first so we can merge main into it
-                    git_mgr.ensure_dataset_branch(dataset_branch)
+                    dataset_branch = git_mgr.ensure_dataset_branch(dataset_branch)
                     try:
                         git_mgr.merge_main()
                     except Exception:
@@ -107,7 +107,7 @@ def main():
                             pass
                         git_mgr.checkout_branch("main")
                         git_mgr.delete_branch(dataset_branch)
-                        git_mgr.ensure_dataset_branch(dataset_branch)
+                        dataset_branch = git_mgr.ensure_dataset_branch(dataset_branch)
                 else:
                     ans = input(f"Would you like to delete the '{dataset_branch}' branch by force to start fresh from the latest main? (y/n): ")
                     if ans.lower() == 'y':
@@ -116,7 +116,8 @@ def main():
 
         # Checkout dataset branch to reveal tracked files
         if had_commits:
-            git_mgr.ensure_dataset_branch(dataset_branch)
+            dataset_branch = git_mgr.ensure_dataset_branch(dataset_branch)
+            workspace_mgr = WorkspaceManager(dataset_branch, root_dir=workspace_root)
 
         # State detection: check the ROOT directory for tracked artifacts
         has_previous_state = Path("history.json").exists() and Path("train_model.py").exists()

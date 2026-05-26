@@ -84,18 +84,18 @@ class GitManager:
             
         return self.get_current_commit() if self.repo.heads else ""
 
-    def ensure_dataset_branch(self, dataset_branch: str) -> None:
+    def ensure_dataset_branch(self, dataset_branch: str) -> str:
         """
         Checkout the branch used for this dataset (create from main if missing).
         No-op if there are no commits yet (first baseline will create main first).
         """
         if not self.repo.heads:
-            return
+            return dataset_branch
             
         try:
             if self.repo.active_branch.name == dataset_branch:
                 log_stage(f"Already on dataset work branch: {dataset_branch}")
-                return
+                return dataset_branch
         except TypeError:
             pass # Detached HEAD, continue with normal logic
 
@@ -109,7 +109,7 @@ class GitManager:
                 else:
                     raise
             log_stage("Dataset path maps to branch 'main'; using main.")
-            return
+            return "main"
             
         head_names = [h.name for h in self.repo.heads]
         if dataset_branch in head_names:
@@ -117,15 +117,25 @@ class GitManager:
                 self.repo.git.checkout(dataset_branch)
             except git.exc.GitCommandError as e:
                 if "already checked out" in str(e).lower() or "worktree" in str(e).lower():
-                    log_error(f"[CRITICAL ERROR] The dataset branch '{dataset_branch}' is already checked out in another directory (git worktree).")
-                    log_info("Please navigate to your active worktree directory to run this model safely without conflict.")
-                    raise
+                    fallback_branch = f"{dataset_branch}-local"
+                    log_stage(f"[WARNING] Branch '{dataset_branch}' is already checked out in another directory.")
+                    log_stage(f"Falling back to local branch '{fallback_branch}' to avoid conflict.")
+                    if fallback_branch in head_names:
+                        try:
+                            self.repo.git.checkout(fallback_branch)
+                        except git.exc.GitCommandError as fallback_e:
+                            log_error(f"Failed to checkout fallback branch '{fallback_branch}'", fallback_e)
+                            raise
+                    else:
+                        self.repo.git.checkout("-b", fallback_branch, "main")
+                    dataset_branch = fallback_branch
                 else:
                     raise
         else:
             self.repo.git.checkout("-b", dataset_branch, "main")
             
         log_stage(f"Dataset work branch: {dataset_branch}")
+        return dataset_branch
 
     def ensure_dataset_branch_after_initial_commit(self, dataset_branch: str) -> None:
         """After the first-ever commit (created main), add/switch to the dataset branch."""
