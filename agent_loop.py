@@ -26,53 +26,23 @@ from git_manager import GitManager
 
 from utils import read_file
 
-def get_file_messages(file_paths: list, model_name: str, api_key: str = None) -> list:
-    """Uploads files via native API if supported, or falls back to local text extraction."""
-    from pathlib import Path
+def get_file_messages(file_paths: list) -> list:
+    """Reads files locally and formats them as system messages with smart truncation."""
     messages = []
+    MAX_EDA_CHARS = 8000
     
-    # 1. Kimi / Moonshot / OpenAI
-    if "kimi" in model_name.lower() or "moonshot" in model_name.lower() or "openai" in model_name.lower():
-        if api_key:
-            try:
-                from openai import OpenAI
-                base_url = "https://api.moonshot.ai/v1" if ("kimi" in model_name.lower() or "moonshot" in model_name.lower()) else None
-                client = OpenAI(api_key=api_key, base_url=base_url) if base_url else OpenAI(api_key=api_key)
-                
-                log_info("Uploading files via OpenAI/Moonshot API...")
-                for fp in file_paths:
-                    if not Path(fp).exists(): continue
-                    file_object = client.files.create(file=Path(fp), purpose="file-extract")
-                    file_content = client.files.content(file_id=file_object.id).text
-                    messages.append({"role": "system", "content": f"File Content for {fp}:\n{file_content}"})
-                return messages
-            except Exception as e:
-                log_info(f"File upload failed: {e}. Falling back to local text reading.")
-        else:
-             log_info("API key not found. Falling back to local file reading.")
-
-    # 2. Gemini
-    elif "gemini" in model_name.lower():
-        try:
-            import google.generativeai as genai
-            if api_key:
-                genai.configure(api_key=api_key)
-            log_info("Uploading files via Gemini API...")
-            for fp in file_paths:
-                if not Path(fp).exists(): continue
-                file_object = genai.upload_file(fp)
-                # LiteLLM expects the file object inside a list for the content
-                messages.append({"role": "system", "content": [file_object, f"File: {fp}"]})
-            return messages
-        except Exception as e:
-            log_info(f"Gemini file upload failed: {e}. Falling back to local text reading.")
-
-    # 3. Fallback
-    log_info("Reading files locally as fallback...")
+    log_info("Reading context files locally...")
     for fp in file_paths:
-        if Path(fp).exists():
-            with open(fp, 'r') as f:
-                messages.append({"role": "system", "content": f"File Content for {fp}:\n{f.read()}"})
+        if not Path(fp).exists():
+            continue
+        content = read_file(fp)
+        
+        # Truncate large EDA files to preserve LLM context window.
+        # Never truncate train_model.py — the LLM needs the full code.
+        if "EDA" in fp and len(content) > MAX_EDA_CHARS:
+            content = content[:MAX_EDA_CHARS] + "\n... [TRUNCATED FOR BREVITY] ..."
+        
+        messages.append({"role": "system", "content": f"--- {fp} ---\n{content}"})
                 
     return messages
 
@@ -91,9 +61,17 @@ def extract_python_code(text: str) -> str:
 
 @weave.op()
 def call_agent_llm(completion_kwargs: dict) -> str:
-    """Wrapper for LLM completion to enable Weave tracing."""
+    """Wrapper for LLM completion with streaming to prevent gateway timeouts."""
+    completion_kwargs["stream"] = True
     response = completion(**completion_kwargs)
-    return response.choices[0].message.content
+    
+    chunks = []
+    for chunk in response:
+        delta = chunk.choices[0].delta.content
+        if delta:
+            chunks.append(delta)
+    
+    return "".join(chunks)
 
 def run_training_script(script_path="train_model.py", timeout: int = 600, config_path="config.yaml", workspace_mgr=None):
     # Ensure no stale metrics exist
@@ -235,39 +213,29 @@ def run_agent_loop(
         current_script = read_file(script_path)
         memory_string = _build_agent_memory(history)
 
-        pred_prob_instruction = "Ensure that for the final `raw_submission.csv`, you ALWAYS predict the continuous PROBABILITIES for the positive class (e.g., using `predict_proba(test_X)[:, 1]`). Do NOT apply any thresholding or class conversion. Another script will handle formatting it for Kaggle into `submission.csv`."
-
         models_str = ", ".join(available_models) if available_models else "None specifically defined in registry"
-        prompt = f"""You are an expert AI Data Scientist. Your goal is to improve the Cross-Validation score of the model.
+        prompt = f"""You are an expert AI Data Scientist. Improve the Cross-Validation score of the model.
 
-CRITICAL: Your script MUST remain dataset-agnostic. 
-- ALWAYS read `dataset_path`, `target_col`, and `test_path` from the configuration file.
-- Support a `--config` command-line argument (using `argparse`) to specify the configuration file path (defaulting to `config.yaml`).
-- Support a `--output_dir` command-line argument (defaulting to `.`). You MUST save `metrics.json` and `raw_submission.csv` inside this directory using `os.path.join`.
-- NEVER hardcode column names (like "Survived") or file paths (like "data/titanic/train.csv").
-- Use the `target_col` variable from the config for all target-related operations, including the submission file column name.
-- When reading the dataset, you MUST preserve the `nrows=...` argument in `pd.read_csv` to prevent Out-Of-Memory crashes during evaluation.
-- ID COLUMN PRESERVATION: When generating `raw_submission.csv`, you MUST capture the original ID column (typically the first column of the test set) before dropping it from the feature set. Failure to do this causes "column shifting" where the ID column is replaced by feature data, leading to invalid submissions.
+RULES (your script MUST follow ALL of these):
+1. DATASET-AGNOSTIC: Read `dataset_path`, `target_col`, `test_path` from config. Never hardcode column names or file paths.
+2. CLI INTERFACE: Accept `--config` (default `config.yaml`) and `--output_dir` (default `.`) via `argparse`.
+3. OUTPUT: Save `metrics.json` (format: `{{"cv_score": final_score}}`) and `raw_submission.csv` inside `output_dir` using `pathlib.Path(output_dir) / ...`.
+4. MEMORY SAFETY: Preserve any `nrows=...` argument in `pd.read_csv` to prevent OOM crashes.
+5. ID COLUMN: Capture the test set's first column (ID) before dropping it from features. Failure causes column shifting in submissions.
+6. PREDICTIONS: For `raw_submission.csv`, always output continuous probabilities via `predict_proba(test_X)[:, 1]`. No thresholding — another script handles Kaggle formatting.
 
-MODELING FREEDOM: You are NOT restricted to the current model setup (e.g., CatBoost). 
-- You are encouraged to change the model architecture, introduce ensembling (using `VotingClassifier`/`Regressor` or `StackingClassifier`/`Regressor`), or try different frameworks (XGBoost, LightGBM, CatBoost, H2O AutoML) to improve the score.
-- You can add feature engineering, handle missing values better, and tune hyperparameters.
-
-You have access to the following pre-configured models from the registry: {models_str}. You may tune their hyperparameters, but do not hallucinate imports for models outside of this list unless you are confident they are in the environment.
-
-You should try tuning hyperparameters for these models, comparing their individual performance, or ensembling them (e.g., using `VotingClassifier`/`VotingRegressor` or `StackingClassifier`/`StackingRegressor`) to maximize the cross-validation score.
+MODELING FREEDOM:
+- You may change the model, introduce ensembling (`VotingClassifier`/`StackingClassifier`), or switch frameworks (XGBoost, LightGBM, CatBoost, H2O AutoML).
+- You can add feature engineering, improve missing value handling, and tune hyperparameters.
+- Available registry models: {models_str}. You may tune their hyperparameters but do not hallucinate imports for models outside this list unless confident they are installed.
 
 {memory_string}
 
-YOUR MISSION PRIORITIES:
+PRIORITIES:
+1. FIX ERRORS FIRST: If agent memory shows a traceback, your exclusive priority is debugging. Do not add features until errors are resolved.
+2. IMPROVE SCORE: If the previous run succeeded, improve via feature engineering, hyperparameter tuning, or architecture changes.
 
-FIX ERRORS FIRST: If the memory above indicates the previous run failed with a traceback or error, your EXCLUSIVE priority is to debug and fix the script. Do NOT attempt to add new features, models, or optimizations until the error is resolved.
-
-IMPROVE SCORE: If the previous run succeeded, your goal is to propose a modified version of the script to improve the model via feature engineering, missing value handling, hyperparameter tuning, or architecture changes.
-
-Always ensure your script accepts an `--output_dir` command-line argument using `argparse`. You MUST write the final cross-validation score to a file named `metrics.json` and predictions to `raw_submission.csv` inside this `output_dir` using `pathlib.Path(output_dir) / ...`. Do NOT use generic relative paths. The format for metrics should be: `{{"cv_score": final_score}}`.
-{pred_prob_instruction}
-Output ONLY the full modified Python code wrapped in python ...  blocks. Do not include other text.
+Output ONLY the full modified Python code in ```python ... ``` blocks. No other text.
 """
         
         if not skip_confirmation:
@@ -284,15 +252,14 @@ Output ONLY the full modified Python code wrapped in python ...  blocks. Do not 
             log_stage(f"Calling LLM: {model_name}")
             
             user_message = {"role": "user", "content": prompt}
-            api_key = os.environ.get("GEMINI_API_KEY") if "gemini" in model_name.lower() else os.environ.get("MOONSHOT_API_KEY", os.environ.get("OPENAI_API_KEY"))
-            file_messages = get_file_messages(["train_model.py", "EDA.md", config_path], model_name, api_key)
+            file_messages = get_file_messages(["train_model.py", "EDA.md"])
             final_messages = file_messages + [user_message]
 
             completion_kwargs = {
                 "model": model_name,
                 "messages": final_messages,
                 "temperature": temperature,
-                "request_timeout": 300  # Ensure LLM call doesn't hang indefinitely
+                "request_timeout": 600  # Long timeout to accommodate streaming code generation
             }
             # Ollama requires an api_base pointing to the local server
             if model_name.startswith("ollama"):

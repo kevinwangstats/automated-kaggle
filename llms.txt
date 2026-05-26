@@ -22,7 +22,7 @@ Before proposing code edits, you MUST read and strictly adhere to the instructio
 - It triggers `eda_engine.py` to generate `EDA.md`.
 - `baseline_engine.py` runs basic models (XGBoost, LightGBM, CatBoost, H2O AutoML) via K-Fold CV to establish initial performance.
 - Crucially, `baseline_engine.py` then writes a `train_model.py` template that ensembles the dynamically loaded models from `models_registry.yaml` using a scikit-learn `Pipeline`.
-- `agent_loop.py` takes control. It leverages a Multi-Message architecture with **native file uploads** (Gemini API or Moonshot/OpenAI `file-extract` API) to inject `EDA.md` and `train_model.py` directly into the system context, preventing prompt bloat.
+- `agent_loop.py` takes control. It leverages a Multi-Message architecture with local text reading and smart truncation (truncating large files like `EDA.md` while keeping `train_model.py` fully intact) to inject relevant context directly into the system prompt efficiently. The LLM connection uses native streaming to prevent intermediate gateway timeouts.
 - The LLM rewrites `train_model.py` to optimize the pipeline.
 - The new script is executed in an isolated `subprocess.run` with a strict timeout.
 - If the script fails, the `RuntimeError` or `TimeoutExpired` is captured. To prevent context window bloat, the traceback is aggressively truncated (max 1500 chars) before being fed *back* into the next iteration's prompt.
