@@ -140,7 +140,8 @@ def _build_agent_memory(history: list) -> str:
 
     for run in recent_history:
         status = "IMPROVED" if run.get('improved') else ("FAILED WITH ERROR" if run.get('error') else "DEGRADED")
-        memory_string += f"- Iteration {run['iteration']} ({status}): "
+        mode_str = f" [Mode: {run.get('mode')}]" if run.get('mode') else ""
+        memory_string += f"- Iteration {run['iteration']}{mode_str} ({status}): "
         
         if run.get('error'):
             # Truncate error to last 1000 chars
@@ -231,6 +232,9 @@ def run_agent_loop(
                 # Only trigger strict Debug Mode for script execution failures, not LLM API timeouts
                 if "Script Execution Failed" in error_str or "Traceback" in error_str or "SyntaxError" in error_str:
                     last_run_failed = True
+
+        mode_name = "DEBUG" if last_run_failed else "OPTIMIZATION"
+        log_info(f"Active Mode for Iteration {i}: {mode_name}")
 
         models_str = ", ".join(available_models) if available_models else "None specifically defined in registry"
         
@@ -357,7 +361,8 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. N
                 "score": None,
                 "improved": False,
                 "error": f"Extraction/Write Failed: {e}",
-                "agent_reasoning": "Extraction/Write Failed"
+                "agent_reasoning": "Extraction/Write Failed",
+                "mode": "DEBUG" if last_run_failed else "OPTIMIZATION"
             })
             with open(history_path, "w") as f:
                 json.dump(history, f, indent=2)
@@ -405,7 +410,8 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. N
                     "commit": commit_id,
                     "score": new_score,
                     "improved": True,
-                    "agent_reasoning": llm_summary
+                    "agent_reasoning": llm_summary,
+                    "mode": "DEBUG" if last_run_failed else "OPTIMIZATION"
                 })
             else:
                 log_stage(f"Score degraded or unchanged. Leaving changes uncommitted in workspace for next iteration to retry.")
@@ -414,7 +420,8 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. N
                     "commit": None,
                     "score": new_score,
                     "improved": False,
-                    "agent_reasoning": llm_summary
+                    "agent_reasoning": llm_summary,
+                    "mode": "DEBUG" if last_run_failed else "OPTIMIZATION"
                 })
                 
             # Kaggle Submission Logic
@@ -450,7 +457,8 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. N
                 "score": None,
                 "improved": False,
                 "error": str(e),
-                "agent_reasoning": llm_summary if 'llm_summary' in locals() else "Execution failed before logic extraction"
+                "agent_reasoning": llm_summary if 'llm_summary' in locals() else "Execution failed before logic extraction",
+                "mode": "DEBUG" if last_run_failed else "OPTIMIZATION"
             })
             
         with open(history_path, "w") as f:
