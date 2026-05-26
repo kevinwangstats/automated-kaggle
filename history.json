@@ -355,5 +355,29 @@
     "score": 0.8873591040162496,
     "improved": true,
     "agent_reasoning": "No reasoning provided by LLM."
+  },
+  {
+    "iteration": 44,
+    "commit": null,
+    "score": null,
+    "improved": false,
+    "error": "Script Execution Failed:\n\nCV Progress:   0%|          | 0/5 [00:00<?, ?it/s]\nCV Progress:   0%|          | 0/5 [00:00<?, ?it/s]\nTraceback (most recent call last):\n  File \"/Users/kevinwang/projects/automated-kaggle-titanic/train_model.py\", line 323, in <module>\n    train_and_evaluate(args.config, args.output_dir)\n  File \"/Users/kevinwang/projects/automated-kaggle-titanic/train_model.py\", line 202, in train_and_evaluate\n    X_train = prep.fit_transform(X_train_raw)\n              ^^^^^^^^^^^^^^^^^^\nAttributeError: 'GenericFeatureEngineer' object has no attribute 'fit_transform'. Did you mean: 'transform'?\n",
+    "agent_reasoning": "No reasoning provided by LLM."
+  },
+  {
+    "iteration": 45,
+    "commit": null,
+    "score": null,
+    "improved": false,
+    "error": "Script Execution Failed:\n...[TRUNCATED]...\n          ^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/kevinwang/miniconda3/envs/kaggle/lib/python3.11/site-packages/pandas/core/apply.py\", line 1578, in apply_standard\n    mapped = obj._map_values(mapper=curried)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/kevinwang/miniconda3/envs/kaggle/lib/python3.11/site-packages/pandas/core/base.py\", line 1020, in _map_values\n    return arr.map(mapper, na_action=na_action)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/kevinwang/miniconda3/envs/kaggle/lib/python3.11/site-packages/pandas/core/arrays/arrow/array.py\", line 1753, in map\n    return super().map(mapper, na_action)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/kevinwang/miniconda3/envs/kaggle/lib/python3.11/site-packages/pandas/core/arrays/base.py\", line 2745, in map\n    return map_array(self, mapper, na_action=na_action)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/kevinwang/miniconda3/envs/kaggle/lib/python3.11/site-packages/pandas/core/algorithms.py\", line 1715, in map_array\n    return lib.map_infer(values, mapper)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"pandas/_libs/lib.pyx\", line 3071, in pandas._libs.lib.map_infer\n  File \"/Users/kevinwang/projects/automated-kaggle-titanic/train_model.py\", line 81, in <lambda>\n    X[f\"{col}_len\"] = X[col].astype(str).apply(lambda x: len(x) if x != 'nan' else 0)\n                                                         ^^^^^^\nTypeError: object of type 'float' has no len()\n",
+    "agent_reasoning": "No reasoning provided by LLM."
+  },
+  {
+    "iteration": 46,
+    "commit": null,
+    "score": null,
+    "improved": false,
+    "error": "Script Execution Failed:\n...[TRUNCATED]...\ntures, embedding_features=embedding_features, pairs=pairs, graph=graph, weight=sample_weight, group_id=group_id,\n                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/kevinwang/miniconda3/envs/kaggle/lib/python3.11/site-packages/catboost/core.py\", line 863, in __init__\n    self._init(data, label, cat_features, text_features, embedding_features, embedding_features_data, pairs, graph, weight,\n  File \"/Users/kevinwang/miniconda3/envs/kaggle/lib/python3.11/site-packages/catboost/core.py\", line 1518, in _init\n    self._init_pool(data, label, cat_features, text_features, embedding_features, embedding_features_data, pairs, graph, weight,\n  File \"_catboost.pyx\", line 4695, in _catboost._PoolBase._init_pool\n  File \"_catboost.pyx\", line 4753, in _catboost._PoolBase._init_pool\n  File \"_catboost.pyx\", line 4541, in _catboost._PoolBase._init_features_order_layout_pool\n  File \"_catboost.pyx\", line 3170, in _catboost._set_features_order_data_pd_data_frame\n  File \"_catboost.pyx\", line 3070, in _catboost._set_features_order_data_frame_generic_categorical_column\n  File \"_catboost.pyx\", line 2694, in _catboost.get_cat_factor_bytes_representation\n_catboost.CatBoostError: Invalid type for cat_feature[non-default value idx=0,feature_idx=9]=nan : cat_features must be integer or string, real number values and NaN values should be converted to string.\n",
+    "agent_reasoning": "No reasoning provided by LLM."
   }
 ]
