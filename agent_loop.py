@@ -245,7 +245,7 @@ RULES (your script MUST follow ALL of these):
 6. PREDICTIONS: For `raw_submission.csv`, always output continuous probabilities via `predict_proba(test_X)[:, 1]`. No thresholding — another script handles Kaggle formatting.
 
 MODELING FREEDOM:
-- You may change the model, introduce ensembling (`VotingClassifier`/`StackingClassifier`), or switch frameworks (XGBoost, LightGBM, CatBoost, H2O AutoML).
+- You may change the model, introduce ensembling (`VotingClassifier`/`StackingClassifier`), or switch frameworks (XGBoost, LightGBM, CatBoost).
 - You can add feature engineering, improve missing value handling, and tune hyperparameters.
 - Available registry models: {models_str}. You may tune their hyperparameters but do not hallucinate imports for models outside this list unless confident they are installed.
 
@@ -336,16 +336,33 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. N
                 log_info(f"If you haven't pulled this model yet, open a new terminal and run: ollama pull {model_name.replace('ollama/', '')}")
             continue
             
-        new_code = extract_python_code(llm_output)
-        
-        # Extract summary/reasoning for W&B
-        llm_summary = re.sub(r'```python.*?```', '', llm_output, flags=re.DOTALL).strip()
-        if not llm_summary:
-            llm_summary = "No reasoning provided by LLM."
-        
-        # Write new code directly to root
-        with open("train_model.py", "w") as f:
-            f.write(new_code)
+        try:
+            new_code = extract_python_code(llm_output)
+            
+            # Extract summary/reasoning for W&B
+            llm_summary = re.sub(r'```python.*?```', '', llm_output, flags=re.DOTALL).strip()
+            if not llm_summary:
+                llm_summary = "No reasoning provided by LLM."
+            
+            # Write new code directly to root
+            target_script = "train_model.py" if not ci_test_mode else "train_model_ci_test.py"
+            with open(target_script, "w") as f:
+                f.write(new_code)
+        except Exception as e:
+            log_error(f"Failed to extract or write code for iteration {i}", e)
+            failures_in_session += 1
+            history.append({
+                "iteration": len(history)+1,
+                "commit": None,
+                "score": None,
+                "improved": False,
+                "error": f"Extraction/Write Failed: {e}",
+                "agent_reasoning": "Extraction/Write Failed"
+            })
+            with open(history_path, "w") as f:
+                json.dump(history, f, indent=2)
+            log_info(f"Iteration {i} completed in {time.time() - iter_start_time:.2f} seconds.")
+            continue
             
         try:
             if ci_test_mode:
