@@ -12,7 +12,7 @@ import os
 import re
 from pathlib import Path
 
-from logger import log_stage, log_error
+from logger import log_stage, log_error, log_info
 
 
 def sanitize_git_branch(name: str) -> str:
