@@ -44,6 +44,11 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
         self.log_cols = []
         self.clip_bounds = {}
         self.top_corr_pairs = []
+        # New attributes for generic text extraction
+        self.abbrev_te_maps = {}
+        self.extract_first_num = set()
+        self.extract_last_num = set()
+        self.extract_abbrev = set()
 
     def fit(self, X, y=None):
         X_df = pd.DataFrame(X).copy()
@@ -59,11 +64,11 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
 
         X_remaining = X_df.drop(columns=self.drop_cols, errors='ignore')
 
-        # Identify column types
+        # Identify column types (robust to pandas version)
         self.text_cols = [
             c for c in X_remaining.columns
             if X_remaining[c].dtype == 'object'
-            or pd.api.types.is_categorical_dtype(X_remaining[c])
+            or str(X_remaining[c].dtype).startswith('category')
             or str(X_remaining[c].dtype) == 'string'
         ]
 
@@ -144,6 +149,26 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
                     for j in range(i + 1, len(top_cols)):
                         self.top_corr_pairs.append((top_cols[i], top_cols[j]))
 
+        # Generic text extraction flags & abbreviation target encoding
+        self.abbrev_te_maps = {}
+        self.extract_first_num = set()
+        self.extract_last_num = set()
+        self.extract_abbrev = set()
+        if y is not None:
+            for col in self.text_cols:
+                s_tmp = X_remaining[col].astype(str).replace('nan', '')
+                if s_tmp.str.extract(r'(\d+)')[0].notna().any():
+                    self.extract_first_num.add(col)
+                if s_tmp.str.extract(r'(\d+)(?!.*\d)')[0].notna().any():
+                    self.extract_last_num.add(col)
+                abbrev_tmp = s_tmp.str.extract(r'\b([A-Za-z]{2,20})\.')[0]
+                if abbrev_tmp.notna().any():
+                    self.extract_abbrev.add(col)
+                    temp = pd.DataFrame({'__val__': abbrev_tmp, '__y__': y_arr})
+                    stats = temp.groupby('__val__')['__y__'].agg(['mean', 'count'])
+                    smoothed = (stats['count'] * stats['mean'] + self.te_smoothing * self.global_mean) / (stats['count'] + self.te_smoothing)
+                    self.abbrev_te_maps[col] = smoothed.to_dict()
+
         return self
 
     def transform(self, X):
@@ -178,6 +203,26 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
                 te_map = self.target_enc_maps[col]
                 X_df[f"{col}_te"] = X_df[col].map(te_map).fillna(self.global_mean).astype(float)
 
+            # Extracted generic features
+            if col in self.extract_first_num:
+                X_df[f"{col}_first_num"] = s.str.extract(r'(\d+)')[0].astype(float)
+            if col in self.extract_last_num:
+                X_df[f"{col}_last_num"] = s.str.extract(r'(\d+)(?!.*\d)')[0].astype(float)
+            if col in self.extract_abbrev:
+                abbrev = s.str.extract(r'\b([A-Za-z]{2,20})\.')[0]
+                X_df[f"{col}_abbrev_te"] = abbrev.map(self.abbrev_te_maps[col]).fillna(self.global_mean).astype(float)
+
+            # Ratios relative to length
+            denom = X_df[f"{col}_len"].replace(0, np.nan)
+            X_df[f"{col}_digit_ratio"] = X_df[f"{col}_digit"] / denom
+            X_df[f"{col}_special_ratio"] = X_df[f"{col}_special"] / denom
+            X_df[f"{col}_upper_ratio"] = X_df[f"{col}_upper"] / denom
+
+            # Punctuation indicators
+            X_df[f"{col}_has_dot"] = s.str.contains(r'\.', regex=True, na=False).astype(int)
+            X_df[f"{col}_has_comma"] = s.str.contains(r',', regex=True, na=False).astype(int)
+            X_df[f"{col}_has_paren"] = s.str.contains(r'\(|\)', regex=True, na=False).astype(int)
+
         # Groupby statistics
         for cat in self.grp_cat_cols:
             if cat not in X_df.columns:
@@ -207,10 +252,14 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
             X_df[f"{col}_is_negative"] = (X_df[col] < 0).astype(int)
             X_df[f"{col}_rank"] = X_df[col].rank(pct=True)
 
-        # Interaction features
+        # Interaction features: product, sum, diff, ratio for top pairs
         for c1, c2 in self.top_corr_pairs:
             if c1 in X_df.columns and c2 in X_df.columns:
                 X_df[f"{c1}_x_{c2}"] = X_df[c1] * X_df[c2]
+                X_df[f"{c1}_plus_{c2}"] = X_df[c1] + X_df[c2]
+                X_df[f"{c1}_minus_{c2}"] = X_df[c1] - X_df[c2]
+                denom = X_df[c2].replace(0, np.nan)
+                X_df[f"{c1}_div_{c2}"] = X_df[c1] / denom
 
         # Row-wise aggregates on all numeric columns (original + engineered)
         num_cols_all = list(X_df.select_dtypes(include=np.number).columns)
@@ -300,22 +349,22 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
 
         estimators = [
             ('xgb', XGBClassifier(
-                n_estimators=1000, max_depth=3, learning_rate=0.03,
-                subsample=0.8, colsample_bytree=0.8, min_child_weight=5,
+                n_estimators=400, max_depth=4, learning_rate=0.05,
+                subsample=0.9, colsample_bytree=0.9, min_child_weight=3,
                 gamma=0.1, reg_alpha=0.5, reg_lambda=2.0,
                 scale_pos_weight=scale_pos_weight,
                 random_state=42, n_jobs=-1, eval_metric='logloss'
             )),
             ('lgb', LGBMClassifier(
-                n_estimators=1000, max_depth=4, learning_rate=0.03,
-                num_leaves=15, subsample=0.8, colsample_bytree=0.8,
-                reg_alpha=0.5, reg_lambda=2.0, min_child_samples=20,
+                n_estimators=400, max_depth=6, learning_rate=0.05,
+                num_leaves=31, subsample=0.9, colsample_bytree=0.9,
+                reg_alpha=0.5, reg_lambda=2.0, min_child_samples=10,
                 class_weight='balanced',
                 random_state=42, verbose=-1, n_jobs=-1
             )),
             ('cat', CatBoostClassifier(
-                iterations=1000, depth=4, learning_rate=0.03,
-                l2_leaf_reg=5.0, border_count=128,
+                iterations=400, depth=6, learning_rate=0.05,
+                l2_leaf_reg=3.0, border_count=128,
                 auto_class_weights='Balanced',
                 random_seed=42, verbose=False, thread_count=-1,
                 loss_function='Logloss'
@@ -327,7 +376,7 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         ]
         ensemble = StackingClassifier(
             estimators=estimators,
-            final_estimator=LogisticRegression(C=1.0, max_iter=5000, random_state=42),
+            final_estimator=LogisticRegression(C=0.1, max_iter=10000, class_weight='balanced', random_state=42),
             passthrough=False,
             stack_method='predict_proba',
             cv=5,
@@ -337,20 +386,20 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     else:
         estimators = [
             ('xgb', XGBRegressor(
-                n_estimators=1000, max_depth=3, learning_rate=0.03,
-                subsample=0.8, colsample_bytree=0.8, min_child_weight=5,
+                n_estimators=400, max_depth=4, learning_rate=0.05,
+                subsample=0.9, colsample_bytree=0.9, min_child_weight=3,
                 gamma=0.1, reg_alpha=0.5, reg_lambda=2.0,
                 random_state=42, n_jobs=-1
             )),
             ('lgb', LGBMRegressor(
-                n_estimators=1000, max_depth=4, learning_rate=0.03,
-                num_leaves=15, subsample=0.8, colsample_bytree=0.8,
-                reg_alpha=0.5, reg_lambda=2.0, min_child_samples=20,
+                n_estimators=400, max_depth=6, learning_rate=0.05,
+                num_leaves=31, subsample=0.9, colsample_bytree=0.9,
+                reg_alpha=0.5, reg_lambda=2.0, min_child_samples=10,
                 random_state=42, verbose=-1, n_jobs=-1
             )),
             ('cat', CatBoostRegressor(
-                iterations=1000, depth=4, learning_rate=0.03,
-                l2_leaf_reg=5.0, border_count=128,
+                iterations=400, depth=6, learning_rate=0.05,
+                l2_leaf_reg=3.0, border_count=128,
                 random_seed=42, verbose=False, thread_count=-1,
                 loss_function='RMSE'
             )),
