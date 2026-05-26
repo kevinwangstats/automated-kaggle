@@ -9,6 +9,7 @@ However, it can be tested independently in a Python shell:
 """
 import os
 import json
+import time
 import re
 import subprocess
 import yaml
@@ -166,6 +167,7 @@ def run_agent_loop(
     strict_mode: bool = False,
     ci_test_mode: bool = False
 ):
+    agent_loop_start_time = time.time()
     if available_models is None:
         available_models = []
     log_stage("Starting Agentic Loop")
@@ -203,6 +205,7 @@ def run_agent_loop(
     
     for i in range(start_iteration, end_iteration):
         log_stage(f"Iteration {i}")
+        iter_start_time = time.time()
         
         # We ensure we are on the dataset branch, but we DO NOT revert changes.
         # This allows a broken script from a failed previous iteration to persist
@@ -404,6 +407,8 @@ Output ONLY the full modified Python code in ```python ... ``` blocks. No other 
             
         with open(history_path, "w") as f:
             json.dump(history, f, indent=2)
+            
+        log_info(f"Iteration {i} completed in {time.time() - iter_start_time:.2f} seconds.")
 
     if max_iterations > 0 and failures_in_session == max_iterations:
         if strict_mode:
@@ -412,5 +417,6 @@ Output ONLY the full modified Python code in ```python ... ``` blocks. No other 
             log_stage("WARNING: All agent iterations failed during this session. Continuing pipeline gracefully.")
 
     log_stage("Agentic Loop Finished")
+    log_info(f"Total time used for agent loop: {time.time() - agent_loop_start_time:.2f} seconds.")
     log_metric("Final Best Score", current_best_score)
 

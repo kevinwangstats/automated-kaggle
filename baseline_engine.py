@@ -53,6 +53,7 @@ import json
 import os
 import re
 import argparse
+import warnings
 from sklearn.model_selection import KFold, cross_val_score
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 from sklearn.compose import ColumnTransformer
@@ -62,6 +63,8 @@ from sklearn.metrics import make_scorer, roc_auc_score, mean_squared_error
 from pathlib import Path
 from tqdm import tqdm
 from utils import load_config, clean_column_names
+
+warnings.filterwarnings('ignore')
 
 def train_and_evaluate(config_path="config.yaml", output_dir="."):
     # 1. Load Configuration & Data
