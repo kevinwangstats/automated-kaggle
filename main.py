@@ -101,6 +101,10 @@ def main():
                         git_mgr.merge_main()
                     except Exception:
                         log_info(f"Failed to merge main into '{dataset_branch}'. Force-deleting the outdated branch to start fresh from latest main.")
+                        try:
+                            git_mgr.repo.git.merge(abort=True)
+                        except Exception:
+                            pass
                         git_mgr.checkout_branch("main")
                         git_mgr.delete_branch(dataset_branch)
                         git_mgr.ensure_dataset_branch(dataset_branch)
