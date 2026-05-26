@@ -188,12 +188,15 @@ def submit_to_kaggle(config_path="config.yaml", commit_id=None, workspace_mgr=No
         return
 
     dataset_path = config.get("dataset_path", "")
-    # Try to infer competition from dataset_path, e.g., data/titanic/train.csv -> titanic
-    path_parts = dataset_path.split("/")
+    # Try to infer competition from dataset_path, e.g., .../data/titanic/train.csv -> titanic
     competition_name = None
-    if len(path_parts) >= 3 and path_parts[0] == "data":
-        competition_name = path_parts[1]
-    
+    try:
+        p = Path(dataset_path)
+        data_idx = p.parts.index("data")
+        competition_name = p.parts[data_idx + 1]
+    except (ValueError, IndexError):
+        pass
+
     if not competition_name:
         log_info(f"Could not infer competition name from dataset_path: {dataset_path}")
         return
