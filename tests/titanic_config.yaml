@@ -53,11 +53,11 @@ temperature: 1
 
 # feature_iterations: Number of cycles dedicated strictly to feature engineering using default model.
 # Examples: 5, 10, 20
-feature_iterations: 5
+feature_iterations: 10
 
 # tuning_iterations: Number of cycles dedicated to architecture changes, ensembling, and hyperparameter tuning.
 # Examples: 2, 5, 10
-tuning_iterations: 2
+tuning_iterations: 5
 
 # --- PIPELINE TUNING & METRICS ---
 
@@ -102,7 +102,7 @@ example_submission: "data/titanic/gender_submission.csv"
 # "never": Disables automated submissions.
 # Requires: `pip install kaggle` and a valid `~/.kaggle/kaggle.json`.
 # Examples: "always", "best", "never"
-auto_kaggle_submit: "always"
+auto_kaggle_submit: "best"
 
 # --- LOGGING & ADVANCED OPTIONS ---
 

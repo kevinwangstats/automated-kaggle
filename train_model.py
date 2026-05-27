@@ -7,9 +7,9 @@ import re
 import argparse
 from pathlib import Path
 from sklearn.model_selection import StratifiedKFold, KFold, cross_val_score
-from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler, FunctionTransformer
 from sklearn.impute import SimpleImputer
-from sklearn.compose import ColumnTransformer, make_column_selector
+from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.metrics import roc_auc_score
@@ -22,7 +22,7 @@ from catboost import CatBoostClassifier, CatBoostRegressor
 
 
 class FeatureEngineer(BaseEstimator, TransformerMixin):
-    def __init__(self, cat_max_cardinality=100, grp_min_cat=2, grp_max_cat=50,
+    def __init__(self, cat_max_cardinality=100, grp_min_cat=2, grp_max_cat=100,
                  te_smoothing=10.0, rare_thresh=0.005, log_skew_thresh=1.5):
         self.cat_max_cardinality = cat_max_cardinality
         self.grp_min_cat = grp_min_cat
@@ -44,11 +44,20 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
         self.log_cols = []
         self.clip_bounds = {}
         self.top_corr_pairs = []
-        # New attributes for generic text extraction
+        # Generic text extraction attributes
         self.abbrev_te_maps = {}
         self.extract_first_num = set()
         self.extract_last_num = set()
         self.extract_abbrev = set()
+        self.first_char_te_maps = {}
+        self.last_char_te_maps = {}
+        self.prefix_te_maps = {}
+        self.suffix_te_maps = {}
+        self.extract_first_char = set()
+        self.extract_last_char = set()
+        self.extract_prefix = set()
+        self.extract_suffix = set()
+        self.low_card_int_cols = []
 
     def fit(self, X, y=None):
         X_df = pd.DataFrame(X).copy()
@@ -64,7 +73,7 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
 
         X_remaining = X_df.drop(columns=self.drop_cols, errors='ignore')
 
-        # Identify column types (robust to pandas version)
+        # Identify column types
         self.text_cols = [
             c for c in X_remaining.columns
             if X_remaining[c].dtype == 'object'
@@ -87,6 +96,15 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
             if self.grp_min_cat <= X_remaining[c].nunique(dropna=False) <= self.grp_max_cat
         ]
 
+        # Add low-cardinality integer columns as groupby keys
+        self.low_card_int_cols = [
+            c for c in X_remaining.columns
+            if pd.api.types.is_integer_dtype(X_remaining[c])
+            and self.grp_min_cat <= X_remaining[c].nunique(dropna=False) <= self.grp_max_cat
+            and c not in self.text_cols
+        ]
+        self.grp_cat_cols = self.grp_cat_cols + self.low_card_int_cols
+
         # Limit groupby interactions to prevent OOM
         if len(self.grp_cat_cols) * len(self.num_cols) > 500:
             self.grp_cat_cols = []
@@ -99,7 +117,7 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
             if rare_cats:
                 self.rare_maps[col] = {cat: '__RARE__' for cat in rare_cats}
 
-        # Target encoding for all text columns (fit on train fold only)
+        # Target encoding for all text columns
         if y is not None:
             y_arr = np.asarray(y)
             if y_arr.ndim == 2 and y_arr.shape[1] == 1:
@@ -124,7 +142,7 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
                     grp = X_remaining.groupby(X_remaining[cat].astype(str).fillna('__MISSING__'))[num]
                     self.groupby_stats[cat][num] = grp.agg(['mean', 'std', 'min', 'max'])
 
-        # Numeric transforms: clipping bounds, log transform for skewed non-negative features
+        # Numeric transforms
         for col in self.num_cols:
             col_min = X_remaining[col].min(skipna=True)
             if pd.notna(col_min) and col_min >= 0:
@@ -142,25 +160,23 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
                 c = X_remaining[col].corr(y_series)
                 if pd.notna(c):
                     corr_vals[col] = abs(c)
-            top_k = min(5, len(corr_vals))
+            top_k = min(8, len(corr_vals))
             if top_k >= 2:
                 top_cols = sorted(corr_vals, key=corr_vals.get, reverse=True)[:top_k]
                 for i in range(len(top_cols)):
                     for j in range(i + 1, len(top_cols)):
                         self.top_corr_pairs.append((top_cols[i], top_cols[j]))
 
-        # Generic text extraction flags & abbreviation target encoding
-        self.abbrev_te_maps = {}
-        self.extract_first_num = set()
-        self.extract_last_num = set()
-        self.extract_abbrev = set()
+        # Generic text extraction flags & target encodings
         if y is not None:
             for col in self.text_cols:
                 s_tmp = X_remaining[col].astype(str).replace('nan', '')
+
                 if s_tmp.str.extract(r'(\d+)')[0].notna().any():
                     self.extract_first_num.add(col)
                 if s_tmp.str.extract(r'(\d+)(?!.*\d)')[0].notna().any():
                     self.extract_last_num.add(col)
+
                 abbrev_tmp = s_tmp.str.extract(r'\b([A-Za-z]{2,20})\.')[0]
                 if abbrev_tmp.notna().any():
                     self.extract_abbrev.add(col)
@@ -168,6 +184,38 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
                     stats = temp.groupby('__val__')['__y__'].agg(['mean', 'count'])
                     smoothed = (stats['count'] * stats['mean'] + self.te_smoothing * self.global_mean) / (stats['count'] + self.te_smoothing)
                     self.abbrev_te_maps[col] = smoothed.to_dict()
+
+                first_tmp = s_tmp.str[0]
+                if first_tmp.notna().any():
+                    self.extract_first_char.add(col)
+                    temp = pd.DataFrame({'__val__': first_tmp, '__y__': y_arr})
+                    stats = temp.groupby('__val__')['__y__'].agg(['mean', 'count'])
+                    smoothed = (stats['count'] * stats['mean'] + self.te_smoothing * self.global_mean) / (stats['count'] + self.te_smoothing)
+                    self.first_char_te_maps[col] = smoothed.to_dict()
+
+                last_tmp = s_tmp.str[-1]
+                if last_tmp.notna().any():
+                    self.extract_last_char.add(col)
+                    temp = pd.DataFrame({'__val__': last_tmp, '__y__': y_arr})
+                    stats = temp.groupby('__val__')['__y__'].agg(['mean', 'count'])
+                    smoothed = (stats['count'] * stats['mean'] + self.te_smoothing * self.global_mean) / (stats['count'] + self.te_smoothing)
+                    self.last_char_te_maps[col] = smoothed.to_dict()
+
+                prefix_tmp = s_tmp.str.extract(r'^([^0-9]+)')[0]
+                if prefix_tmp.notna().any():
+                    self.extract_prefix.add(col)
+                    temp = pd.DataFrame({'__val__': prefix_tmp, '__y__': y_arr})
+                    stats = temp.groupby('__val__')['__y__'].agg(['mean', 'count'])
+                    smoothed = (stats['count'] * stats['mean'] + self.te_smoothing * self.global_mean) / (stats['count'] + self.te_smoothing)
+                    self.prefix_te_maps[col] = smoothed.to_dict()
+
+                suffix_tmp = s_tmp.str.extract(r'([^0-9]+)$')[0]
+                if suffix_tmp.notna().any():
+                    self.extract_suffix.add(col)
+                    temp = pd.DataFrame({'__val__': suffix_tmp, '__y__': y_arr})
+                    stats = temp.groupby('__val__')['__y__'].agg(['mean', 'count'])
+                    smoothed = (stats['count'] * stats['mean'] + self.te_smoothing * self.global_mean) / (stats['count'] + self.te_smoothing)
+                    self.suffix_te_maps[col] = smoothed.to_dict()
 
         return self
 
@@ -198,12 +246,11 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
             X_df[f"{col}_leading_letter"] = ll.apply(
                 lambda x: ord(x.upper()) - ord('A') if pd.notna(x) and len(str(x)) > 0 else -1
             ).astype(float)
-            # Target encoding
+
             if col in self.target_enc_maps:
                 te_map = self.target_enc_maps[col]
                 X_df[f"{col}_te"] = X_df[col].map(te_map).fillna(self.global_mean).astype(float)
 
-            # Extracted generic features
             if col in self.extract_first_num:
                 X_df[f"{col}_first_num"] = s.str.extract(r'(\d+)')[0].astype(float)
             if col in self.extract_last_num:
@@ -211,14 +258,24 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
             if col in self.extract_abbrev:
                 abbrev = s.str.extract(r'\b([A-Za-z]{2,20})\.')[0]
                 X_df[f"{col}_abbrev_te"] = abbrev.map(self.abbrev_te_maps[col]).fillna(self.global_mean).astype(float)
+            if col in self.extract_first_char:
+                fc = s.str[0]
+                X_df[f"{col}_first_char_te"] = fc.map(self.first_char_te_maps[col]).fillna(self.global_mean).astype(float)
+            if col in self.extract_last_char:
+                lc = s.str[-1]
+                X_df[f"{col}_last_char_te"] = lc.map(self.last_char_te_maps[col]).fillna(self.global_mean).astype(float)
+            if col in self.extract_prefix:
+                prefix = s.str.extract(r'^([^0-9]+)')[0]
+                X_df[f"{col}_prefix_te"] = prefix.map(self.prefix_te_maps[col]).fillna(self.global_mean).astype(float)
+            if col in self.extract_suffix:
+                suffix = s.str.extract(r'([^0-9]+)$')[0]
+                X_df[f"{col}_suffix_te"] = suffix.map(self.suffix_te_maps[col]).fillna(self.global_mean).astype(float)
 
-            # Ratios relative to length
             denom = X_df[f"{col}_len"].replace(0, np.nan)
             X_df[f"{col}_digit_ratio"] = X_df[f"{col}_digit"] / denom
             X_df[f"{col}_special_ratio"] = X_df[f"{col}_special"] / denom
             X_df[f"{col}_upper_ratio"] = X_df[f"{col}_upper"] / denom
 
-            # Punctuation indicators
             X_df[f"{col}_has_dot"] = s.str.contains(r'\.', regex=True, na=False).astype(int)
             X_df[f"{col}_has_comma"] = s.str.contains(r',', regex=True, na=False).astype(int)
             X_df[f"{col}_has_paren"] = s.str.contains(r'\(|\)', regex=True, na=False).astype(int)
@@ -237,22 +294,34 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
                 X_df[f"{cat}_grp_{num}_min"] = grp_key.map(stats['min']).astype(float)
                 X_df[f"{cat}_grp_{num}_max"] = grp_key.map(stats['max']).astype(float)
 
+        # Groupby-impute numeric missing values before further transforms
+        for cat in self.grp_cat_cols:
+            if cat not in X_df.columns:
+                continue
+            grp_key = X_df[cat].astype(str).fillna('__MISSING__')
+            for num in self.num_cols:
+                if num not in X_df.columns:
+                    continue
+                if num not in self.groupby_stats.get(cat, {}):
+                    continue
+                if X_df[num].isnull().any():
+                    means = self.groupby_stats[cat][num]['mean']
+                    X_df[num] = X_df[num].fillna(grp_key.map(means))
+
         # Numeric features
         for col in self.num_cols:
             if col not in X_df.columns:
                 continue
             X_df[f"{col}_missing"] = X_df[col].isnull().astype(int)
-            # Clip outliers
             low, high = self.clip_bounds.get(col, (-np.inf, np.inf))
             X_df[col] = X_df[col].clip(lower=low, upper=high)
-            # Log transform for skewed non-negative features
             if col in self.log_cols:
                 X_df[f"{col}_log1p"] = np.log1p(X_df[col].clip(lower=0))
             X_df[f"{col}_is_zero"] = (X_df[col] == 0).astype(int)
             X_df[f"{col}_is_negative"] = (X_df[col] < 0).astype(int)
             X_df[f"{col}_rank"] = X_df[col].rank(pct=True)
 
-        # Interaction features: product, sum, diff, ratio for top pairs
+        # Interaction features for top pairs
         for c1, c2 in self.top_corr_pairs:
             if c1 in X_df.columns and c2 in X_df.columns:
                 X_df[f"{c1}_x_{c2}"] = X_df[c1] * X_df[c2]
@@ -261,7 +330,7 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
                 denom = X_df[c2].replace(0, np.nan)
                 X_df[f"{c1}_div_{c2}"] = X_df[c1] / denom
 
-        # Row-wise aggregates on all numeric columns (original + engineered)
+        # Row-wise aggregates on all numeric columns
         num_cols_all = list(X_df.select_dtypes(include=np.number).columns)
         if len(num_cols_all) > 0:
             X_df['row_num_mean'] = X_df[num_cols_all].mean(axis=1)
@@ -276,6 +345,13 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
                 X_df['row_missing_total'] = X_df[missing_cols].sum(axis=1)
 
         return X_df
+
+
+def _cast_to_object(X):
+    """Cast array-like input to object dtype so string imputation works."""
+    if hasattr(X, 'astype'):
+        return X.astype(object)
+    return np.array(X, dtype=object)
 
 
 def load_config(config_path="config.yaml"):
@@ -316,26 +392,33 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
 
     # Probe feature engineer to discover safe columns to drop before preprocessor
     fe_probe = FeatureEngineer()
-    fe_probe.fit(X)
+    fe_probe.fit(X, y)
     if fe_probe.drop_cols:
         X = X.drop(columns=fe_probe.drop_cols, errors='ignore')
 
-    # Determine original categorical columns before feature engineering
-    cat_cols = list(X.select_dtypes(include=['object', 'category', 'string']).columns)
+    # Determine categorical columns (text + low-cardinality integers)
+    cat_cols = []
+    for c in X.columns:
+        if X[c].dtype == 'object' or str(X[c].dtype).startswith('category') or str(X[c].dtype) == 'string':
+            cat_cols.append(c)
+        elif pd.api.types.is_integer_dtype(X[c]) and X[c].nunique(dropna=False) <= 20:
+            cat_cols.append(c)
     cat_cols = [c for c in cat_cols if X[c].nunique(dropna=False) <= 100]
+    num_cols = [c for c in X.columns if pd.api.types.is_numeric_dtype(X[c]) and c not in cat_cols]
 
     # 2. Define Preprocessing Pipeline
     transformers = [
         ('num', Pipeline([
             ('imputer', SimpleImputer(strategy='median')),
             ('scaler', StandardScaler())
-        ]), make_column_selector(dtype_include=np.number)),
+        ]), num_cols),
     ]
     if len(cat_cols) > 0:
         transformers.append(
             ('cat', Pipeline([
+                ('to_object', FunctionTransformer(_cast_to_object, validate=False)),
                 ('imputer', SimpleImputer(strategy='constant', fill_value='MISSING')),
-                ('ohe', OneHotEncoder(handle_unknown='ignore', sparse_output=True))
+                ('ohe', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
             ]), cat_cols)
         )
 
@@ -349,35 +432,35 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
 
         estimators = [
             ('xgb', XGBClassifier(
-                n_estimators=400, max_depth=4, learning_rate=0.05,
-                subsample=0.9, colsample_bytree=0.9, min_child_weight=3,
-                gamma=0.1, reg_alpha=0.5, reg_lambda=2.0,
+                n_estimators=800, max_depth=3, learning_rate=0.03,
+                subsample=0.8, colsample_bytree=0.8, min_child_weight=1,
+                gamma=0.0, reg_alpha=0.1, reg_lambda=1.0,
                 scale_pos_weight=scale_pos_weight,
                 random_state=42, n_jobs=-1, eval_metric='logloss'
             )),
             ('lgb', LGBMClassifier(
-                n_estimators=400, max_depth=6, learning_rate=0.05,
-                num_leaves=31, subsample=0.9, colsample_bytree=0.9,
-                reg_alpha=0.5, reg_lambda=2.0, min_child_samples=10,
+                n_estimators=800, max_depth=-1, learning_rate=0.03,
+                num_leaves=31, subsample=0.8, colsample_bytree=0.8,
+                reg_alpha=0.1, reg_lambda=1.0, min_child_samples=5,
                 class_weight='balanced',
                 random_state=42, verbose=-1, n_jobs=-1
             )),
             ('cat', CatBoostClassifier(
-                iterations=400, depth=6, learning_rate=0.05,
-                l2_leaf_reg=3.0, border_count=128,
+                iterations=800, depth=6, learning_rate=0.03,
+                l2_leaf_reg=3.0, border_count=254,
                 auto_class_weights='Balanced',
                 random_seed=42, verbose=False, thread_count=-1,
                 loss_function='Logloss'
             )),
             ('lr', LogisticRegression(
-                C=0.5, max_iter=2000, class_weight='balanced',
+                C=1.0, max_iter=2000, class_weight='balanced',
                 random_state=42, n_jobs=1
             ))
         ]
         ensemble = StackingClassifier(
             estimators=estimators,
-            final_estimator=LogisticRegression(C=0.1, max_iter=10000, class_weight='balanced', random_state=42),
-            passthrough=False,
+            final_estimator=LogisticRegression(C=1.0, max_iter=10000, class_weight='balanced', random_state=42),
+            passthrough=True,
             stack_method='predict_proba',
             cv=5,
             n_jobs=1
@@ -386,20 +469,20 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     else:
         estimators = [
             ('xgb', XGBRegressor(
-                n_estimators=400, max_depth=4, learning_rate=0.05,
-                subsample=0.9, colsample_bytree=0.9, min_child_weight=3,
-                gamma=0.1, reg_alpha=0.5, reg_lambda=2.0,
+                n_estimators=800, max_depth=3, learning_rate=0.03,
+                subsample=0.8, colsample_bytree=0.8, min_child_weight=1,
+                gamma=0.0, reg_alpha=0.1, reg_lambda=1.0,
                 random_state=42, n_jobs=-1
             )),
             ('lgb', LGBMRegressor(
-                n_estimators=400, max_depth=6, learning_rate=0.05,
-                num_leaves=31, subsample=0.9, colsample_bytree=0.9,
-                reg_alpha=0.5, reg_lambda=2.0, min_child_samples=10,
+                n_estimators=800, max_depth=-1, learning_rate=0.03,
+                num_leaves=31, subsample=0.8, colsample_bytree=0.8,
+                reg_alpha=0.1, reg_lambda=1.0, min_child_samples=5,
                 random_state=42, verbose=-1, n_jobs=-1
             )),
             ('cat', CatBoostRegressor(
-                iterations=400, depth=6, learning_rate=0.05,
-                l2_leaf_reg=3.0, border_count=128,
+                iterations=800, depth=6, learning_rate=0.03,
+                l2_leaf_reg=3.0, border_count=254,
                 random_seed=42, verbose=False, thread_count=-1,
                 loss_function='RMSE'
             )),
@@ -408,7 +491,7 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         ensemble = StackingRegressor(
             estimators=estimators,
             final_estimator=Ridge(random_state=42),
-            passthrough=False,
+            passthrough=True,
             cv=5,
             n_jobs=1
         )
