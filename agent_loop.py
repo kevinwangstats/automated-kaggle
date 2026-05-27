@@ -338,18 +338,7 @@ RULES (your script MUST follow ALL of these):
             break
         except Timeout as e:
             log_error("LLM API Call Timed Out", e)
-            if "gemini-2.5-flash" not in model_name:
-                log_info(f"Temporary fallback to gemini/gemini-2.5-flash due to timeout.")
-                completion_kwargs["model"] = "gemini/gemini-2.5-flash"
-                if "api_base" in completion_kwargs:
-                    del completion_kwargs["api_base"]
-                try:
-                    llm_output = call_agent_llm(completion_kwargs)
-                except Exception as fallback_e:
-                    log_error("Fallback LLM Call also failed", fallback_e)
-                    continue
-            else:
-                continue
+            continue
         except Exception as e:
             log_error("LLM API Call failed (Timeout or other error)", e)
             if "ollama" in (model_name or "").lower():
