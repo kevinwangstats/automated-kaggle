@@ -13,6 +13,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.base import clone
 from sklearn.metrics import roc_auc_score, mean_squared_error
+from sklearn.feature_selection import SelectPercentile, mutual_info_classif, mutual_info_regression, VarianceThreshold
 from lightgbm import LGBMClassifier, LGBMRegressor
 from pathlib import Path
 from tqdm import tqdm
@@ -301,15 +302,49 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
 
     preprocessor = ColumnTransformer(transformers=transformers, remainder='drop')
 
-    # 3. Model Initialization (LightGBM defaults only)
+    # 3. Model Initialization (tuned LightGBM for small regularized data)
     if task == 'classification':
-        model = LGBMClassifier(random_state=42, n_jobs=-1, verbose=-1)
+        model = LGBMClassifier(
+            n_estimators=2000,
+            learning_rate=0.01,
+            num_leaves=15,
+            max_depth=4,
+            min_child_samples=20,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            reg_alpha=0.1,
+            reg_lambda=1.0,
+            class_weight='balanced',
+            random_state=42,
+            n_jobs=-1,
+            verbose=-1
+        )
+        score_func = mutual_info_classif
     else:
-        model = LGBMRegressor(random_state=42, n_jobs=-1, verbose=-1)
+        model = LGBMRegressor(
+            n_estimators=2000,
+            learning_rate=0.01,
+            num_leaves=15,
+            max_depth=4,
+            min_child_samples=20,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            reg_alpha=0.1,
+            reg_lambda=1.0,
+            random_state=42,
+            n_jobs=-1,
+            verbose=-1
+        )
+        score_func = mutual_info_regression
 
-    # 4. Create Full Pipeline
-    pipeline = Pipeline(steps=[('preprocessor', preprocessor),
-                               ('classifier', model)])
+    # 4. Create Full Pipeline with post-processing feature selection
+    pipeline = Pipeline(steps=[
+        ('preprocessor', preprocessor),
+        ('post_imputer', SimpleImputer(strategy='median')),
+        ('variance_threshold', VarianceThreshold(threshold=0.0)),
+        ('select', SelectPercentile(score_func=score_func, percentile=80)),
+        ('classifier', model)
+    ])
     
     # 5. Cross Validation
     if task == 'classification':
