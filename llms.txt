@@ -56,7 +56,7 @@ Before proposing code edits, you MUST read and strictly adhere to the instructio
 - LightGBM models must always be initialized with `verbose=-1` to suppress C++ backend warnings.
 
 ## 6. Configuration & Environment Variables
-- All pipeline inputs (`dataset_path`, `target_col`, `test_path`, `metric`, `iterations`, `timeout`, `max_rows`) are defined in `config.yaml`.
+- All pipeline inputs (`dataset_path`, `target_col`, `test_path`, `metric`, `feature_iterations`, `tuning_iterations`, `timeout`, `max_rows`) are defined in `config.yaml`.
 - The agent must respect the `max_rows` limit when writing data ingestion logic in `train_model.py` to ensure scalable execution on large datasets.
 - `main.py` accepts a single `--config` argument pointing to a YAML file (default: `config.yaml`).
 - The `-y` flag skips per-LLM-call confirmation prompts.
@@ -65,4 +65,4 @@ Before proposing code edits, you MUST read and strictly adhere to the instructio
 
 ## 7. CI/CD Pipeline
 - `.github/workflows/titanic_ci.yml` is a GitHub Actions workflow that triggers on every push/PR to `main`.
-- It tests the EDA and Baseline engines using `iterations: 0` without triggering any LLM calls.tions: 0` without triggering any LLM calls.
+- It tests the EDA and Baseline engines using `feature_iterations: 0` and `tuning_iterations: 0` without triggering any LLM calls.

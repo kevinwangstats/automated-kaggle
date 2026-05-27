@@ -43,13 +43,15 @@ def main():
         test_path = config.get('test_path')
         metric = config.get('metric')
         pred_type = config.get('pred_type', 'prob')
-        iterations = config.get('iterations', 5)
+        feature_iterations = config.get('feature_iterations', 5)
+        tuning_iterations = config.get('tuning_iterations', 2)
         timeout = config.get('timeout', 600)
         model = config.get('model', None)
         temperature = config.get('temperature', 0.4)
         ollama_base_url = config.get('ollama_base_url', None)
         max_rows = config.get('max_rows', 100000)
         ci_test_mode = config.get('ci_test_mode', False)
+        use_llm_file_api = config.get('use_llm_file_api', False)
         
         wandb_config = config.get('wandb', {})
         wandb_enabled = wandb_config.get('enabled', False)
@@ -161,7 +163,8 @@ def main():
                     "dataset_path": dataset_path,
                     "target_col": target_col,
                     "metric": metric,
-                    "iterations": iterations,
+                    "feature_iterations": feature_iterations,
+                    "tuning_iterations": tuning_iterations,
                     "model": model,
                     "max_rows": max_rows
                 }
@@ -358,7 +361,8 @@ def main():
             git_mgr=git_mgr,
             task=task,
             dataset_branch=dataset_branch,
-            max_iterations=iterations,
+            feature_iterations=feature_iterations,
+            tuning_iterations=tuning_iterations,
             skip_confirmation=args.yes,
             timeout=timeout,
             model=model,
@@ -371,7 +375,8 @@ def main():
             config_path=args.config,
             available_models=available_models,
             workspace_mgr=workspace_mgr,
-            ci_test_mode=ci_test_mode
+            ci_test_mode=ci_test_mode,
+            use_llm_file_api=use_llm_file_api
         )
         log_info(f"Phase 3 (Agentic Loop) completed in {time.time() - t_loop:.2f}s")
         
@@ -393,6 +398,11 @@ def main():
         t_format = time.time()
         kaggle_ops.format_submission(args.config, workspace_mgr=workspace_mgr)
         log_info(f"Phase 4 (Format Submission) completed in {time.time() - t_format:.2f}s")
+
+        auto_submit_val = str(config.get("auto_kaggle_submit", "never")).lower()
+        if auto_submit_val in ["always", "true", "best"]:
+            log_stage("Automated Kaggle Submission (Final Best)")
+            kaggle_ops.submit_to_kaggle(args.config, commit_id=git_mgr.get_current_commit(), workspace_mgr=workspace_mgr)
 
         if wandb_enabled:
             wandb.finish()

@@ -19,6 +19,7 @@ import urllib.error
 import wandb
 import weave
 import kaggle_ops
+import llm_file_ops
 from pathlib import Path
 from litellm import completion
 from litellm.exceptions import Timeout, BadRequestError, AuthenticationError
@@ -158,7 +159,8 @@ def run_agent_loop(
     git_mgr: GitManager,
     task: str,
     dataset_branch: str,
-    max_iterations: int = 5,
+    feature_iterations: int = 5,
+    tuning_iterations: int = 2,
     skip_confirmation: bool = False,
     timeout: int = 600,
     model: str = None,
@@ -172,7 +174,8 @@ def run_agent_loop(
     available_models: list = None,
     workspace_mgr=None,
     strict_mode: bool = False,
-    ci_test_mode: bool = False
+    ci_test_mode: bool = False,
+    use_llm_file_api: bool = False
 ):
     agent_loop_start_time = time.time()
     if available_models is None:
@@ -206,23 +209,12 @@ def run_agent_loop(
     eda_content = read_file(eda_path)
     
     start_iteration = len(history) + 1
-    end_iteration = start_iteration + max_iterations
+    total_iterations = feature_iterations + tuning_iterations
+    end_iteration = start_iteration + total_iterations
     
     failures_in_session = 0
     
     for i in range(start_iteration, end_iteration):
-        log_stage(f"Iteration {i}")
-        iter_start_time = time.time()
-        
-        # We ensure we are on the dataset branch, but we DO NOT revert changes.
-        # This allows a broken script from a failed previous iteration to persist
-        # so the LLM can read it and attempt to fix its own errors.
-        git_mgr.checkout_branch(dataset_branch)
-        
-        script_path = "train_model.py"
-        current_script = read_file(script_path)
-        memory_string = _build_agent_memory(history)
-
         # Determine Cognitive State
         last_run_failed = False
         if history:
@@ -233,8 +225,38 @@ def run_agent_loop(
                 if "Script Execution Failed" in error_str or "Traceback" in error_str or "SyntaxError" in error_str:
                     last_run_failed = True
 
-        mode_name = "DEBUG" if last_run_failed else "OPTIMIZATION"
-        log_info(f"Active Mode for Iteration {i}: {mode_name}")
+        if last_run_failed:
+            state_name = "DEBUG MODE"
+            mission_text = """MISSION (DEBUG MODE - CRITICAL):
+The previous execution crashed with the error shown in the memory above. 
+Your EXCLUSIVE priority is to debug and fix the script so it executes successfully.
+- DO NOT attempt to add new features, swap models, or optimize the score in this turn.
+- DO NOT take the "lazy fix" by simply deleting the lines of code that caused the error. You must logically repair the code."""
+        elif i <= feature_iterations:
+            state_name = "FEATURE ENGINEERING MODE"
+            mission_text = """MISSION (FEATURE ENGINEERING MODE):
+The script is stable. Your goal is to maximize the CV score by improving the data representation.
+- STRICT RULE: You MUST use the existing LightGBM model and default hyperparameters. Do NOT change the model or introduce ensembling.
+- FOCUS: Introduce advanced scikit-learn preprocessing (e.g., PolynomialFeatures, KBinsDiscretizer, KNNImputer) and clever pandas transformations."""
+        else:
+            state_name = "ARCHITECTURE & TUNING MODE"
+            mission_text = """MISSION (ARCHITECTURE & TUNING MODE):
+The feature engineering phase is complete and locked.
+- STRICT RULE: Do NOT add, remove, or modify the feature engineering or data preprocessing steps.
+- FOCUS: Your goal is to maximize the CV score by optimizing the model architecture. Swap models (XGBoost, CatBoost), build complex ensembles (StackingClassifier/Voting), and tune hyperparameters."""
+
+        log_stage(f"Iteration {i} [{state_name}]")
+        log_info(f"Active Mode for Iteration {i}: {state_name}")
+        iter_start_time = time.time()
+        
+        # We ensure we are on the dataset branch, but we DO NOT revert changes.
+        # This allows a broken script from a failed previous iteration to persist
+        # so the LLM can read it and attempt to fix its own errors.
+        git_mgr.checkout_branch(dataset_branch)
+        
+        script_path = "train_model.py"
+        current_script = read_file(script_path)
+        memory_string = _build_agent_memory(history)
 
         models_str = ", ".join(available_models) if available_models else "None specifically defined in registry"
         
@@ -247,34 +269,9 @@ RULES (your script MUST follow ALL of these):
 4. MEMORY SAFETY: Preserve any `nrows=...` argument in `pd.read_csv` to prevent OOM crashes.
 5. ID COLUMN: Capture the test set's first column (ID) before dropping it from features. Failure causes column shifting in submissions.
 6. PREDICTIONS: For `raw_submission.csv`, always output continuous probabilities via `predict_proba(test_X)[:, 1]`. No thresholding — another script handles Kaggle formatting.
-
-MODELING FREEDOM:
-- You may change the model, introduce ensembling (`VotingClassifier`/`StackingClassifier`), or switch frameworks (XGBoost, LightGBM, CatBoost).
-- You can add feature engineering, improve missing value handling, and tune hyperparameters.
-- Available registry models: {models_str}. You may tune their hyperparameters but do not hallucinate imports for models outside this list unless confident they are installed.
-
-{memory_string}
 """
 
-        if last_run_failed:
-            mission_prompt = f"""MISSION (DEBUG MODE - CRITICAL):
-The previous execution crashed with the error shown in the memory above.
-Your EXCLUSIVE priority is to debug and fix the script so it executes successfully.
-
-DO NOT attempt to add new features, swap models, or optimize the score in this turn.
-
-DO NOT take the "lazy fix" by simply deleting the lines of code that caused the error. You must logically repair the code (e.g., add .astype(str), .fillna(), or correct the matrix dimensions) so the intended feature or logic works.
-Output ONLY the full fixed Python code wrapped in ```python ... ``` blocks. No other text.
-"""
-        else:
-            mission_prompt = f"""MISSION (OPTIMIZE MODE):
-The previous run succeeded. Your goal is to propose a modified version of the script to improve the Cross-Validation score.
-
-You may perform feature engineering, handle missing values better, tune hyperparameters, or change the ensemble architecture.
-Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. No other text.
-"""
-        
-        prompt = base_prompt + "\n" + mission_prompt
+        prompt = f"{base_prompt}\n=== CURRENT SCRIPT ===\n```python\n{current_script}\n```\n\n{memory_string}\n\n{mission_text}\nOutput ONLY the full modified Python code wrapped in ```python ... ``` blocks. No other text."
         
         if not skip_confirmation:
             log_info(f"Preparing to call LLM for iteration {i}.")
@@ -290,7 +287,26 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. N
             log_stage(f"Calling LLM: {model_name}")
             
             user_message = {"role": "user", "content": prompt}
-            file_messages = get_file_messages(["train_model.py", "EDA.md"])
+            
+            file_messages = None
+            if use_llm_file_api:
+                # Resolve credentials for the file API
+                api_key = os.environ.get("LLM_FILE_API_KEY")
+                base_url = os.environ.get("LLM_FILE_BASE_URL", "https://api.openai.com/v1")
+                
+                # Fallbacks based on common providers if explicit file API keys aren't set
+                if not api_key:
+                    if "moonshot" in model_name.lower() or "kimi" in model_name.lower():
+                        api_key = os.environ.get("MOONSHOT_API_KEY")
+                        base_url = "https://api.moonshot.cn/v1"
+                    elif "openai" in model_name.lower() or "gpt" in model_name.lower():
+                        api_key = os.environ.get("OPENAI_API_KEY")
+                
+                file_messages = llm_file_ops.get_llm_file_messages(["train_model.py", "EDA.md"], api_key=api_key, base_url=base_url)
+            
+            if file_messages is None:
+                file_messages = get_file_messages(["train_model.py", "EDA.md"])
+                
             final_messages = file_messages + [user_message]
 
             completion_kwargs = {
@@ -362,7 +378,7 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. N
                 "improved": False,
                 "error": f"Extraction/Write Failed: {e}",
                 "agent_reasoning": "Extraction/Write Failed",
-                "mode": "DEBUG" if last_run_failed else "OPTIMIZATION"
+                "mode": state_name
             })
             with open(history_path, "w") as f:
                 json.dump(history, f, indent=2)
@@ -411,7 +427,7 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. N
                     "score": new_score,
                     "improved": True,
                     "agent_reasoning": llm_summary,
-                    "mode": "DEBUG" if last_run_failed else "OPTIMIZATION"
+                    "mode": state_name
                 })
             else:
                 log_stage(f"Score degraded or unchanged. Leaving changes uncommitted in workspace for next iteration to retry.")
@@ -421,7 +437,7 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. N
                     "score": new_score,
                     "improved": False,
                     "agent_reasoning": llm_summary,
-                    "mode": "DEBUG" if last_run_failed else "OPTIMIZATION"
+                    "mode": state_name
                 })
                 
             # Kaggle Submission Logic
@@ -458,7 +474,7 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. N
                 "improved": False,
                 "error": str(e),
                 "agent_reasoning": llm_summary if 'llm_summary' in locals() else "Execution failed before logic extraction",
-                "mode": "DEBUG" if last_run_failed else "OPTIMIZATION"
+                "mode": state_name
             })
             
         with open(history_path, "w") as f:
@@ -466,9 +482,9 @@ Output ONLY the full modified Python code wrapped in ```python ... ``` blocks. N
             
         log_info(f"Iteration {i} completed in {time.time() - iter_start_time:.2f} seconds.")
 
-    if max_iterations > 0 and failures_in_session == max_iterations:
+    if total_iterations > 0 and failures_in_session == total_iterations:
         if strict_mode:
-            raise RuntimeError(f"All {max_iterations} agent iterations failed during this session. See logs for details.")
+            raise RuntimeError(f"All {total_iterations} agent iterations failed during this session. See logs for details.")
         else:
             log_stage("WARNING: All agent iterations failed during this session. Continuing pipeline gracefully.")
 

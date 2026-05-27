@@ -15,12 +15,19 @@ The system consists of the following core components:
 7. **Observability & Logging**: The pipeline unifies console output through `logger.py` (`log_info`, `log_stage`, `log_error`), preventing inconsistent outputs. It supports optionally writing this stream to a local file via `--log-file`. Additionally, if Weights & Biases is enabled, `agent_loop.py` uses `@weave.op()` to trace and version all LLM inputs, configurations, and outputs securely.
 
 ## Agentic Memory & API Defense
+
 To maximize API efficiency, prevent infinite loops, and reduce token bloat, the pipeline implements the following safeguards:
+
 - **Semantic Memory**: The orchestrator no longer passes raw code history (prompts and responses) into the LLM context. Instead, it maintains a distilled "Memory String" summarizing only the outcomes and the agent's extracted reasoning from the last 3 runs. This saves significant tokens and forces the agent to maintain focus on high-level strategies rather than drowning in thousands of lines of previous code.
 - **API Defense (Transient vs. Fatal)**: API calls are wrapped in robust litellm exception handlers. **Fatal errors** (e.g., 400 Bad Request, 401 Authentication Error) immediately halt the pipeline to prevent infinite loops and save costs. **Transient Timeouts** trigger an automatic, temporary fallback to `gemini-2.5-flash` to ensure the pipeline continues iterating smoothly.
 
-### Dual-Mode Cognitive State Machine
-To prevent LLM attention dilution, the agent orchestrator utilizes a state machine. If the script is stable, it enters Optimize Mode, focusing entirely on feature engineering and hyperparameter tuning. If the script crashes, it enters a strict Debug Mode. In Debug Mode, the prompt explicitly forbids adding new features and mandates that the agent must repair the broken logic rather than taking the lazy route of deleting it.
+### 3-State Cognitive Architecture
+
+To prevent LLM attention dilution, the agent orchestrator utilizes a 3-State Machine controlled by the configuration parameters `feature_iterations` and `tuning_iterations`.
+
+- **Debug Mode**: If the script crashes, it enters a strict Debug Mode. The prompt explicitly forbids adding new features and mandates repairing the broken logic.
+- **Feature Engineering Mode**: During the first `feature_iterations`, the model architecture is locked (using the default LightGBM). The agent's sole focus is maximizing the CV score by improving data representation via scikit-learn preprocessing and pandas transformations.
+- **Architecture & Tuning Mode**: After the feature engineering phase completes, the data preprocessing is locked. For the remaining `tuning_iterations`, the agent focuses exclusively on optimizing the model architecture, swapping models (XGBoost, CatBoost), building ensembles, and hyperparameter tuning.
 
 ## Agentic Memory & API Defense
 To maximize API efficiency, prevent infinite loops, and reduce token bloat, the pipeline implements the following safeguards:
@@ -63,17 +70,20 @@ This project enforces a strictly data-agnostic workflow using **Git Worktrees**.
 
 To start a new competition or dataset experiment without cluttering the `main` branch or switching context manually:
 
-1.  **Create a new branch** from `main`:
+1. **Create a new branch** from `main`:
+
     ```bash
     git branch my-new-dataset
     ```
 
-2.  **Initialize a new Worktree** in a sibling folder:
+2. **Initialize a new Worktree** in a sibling folder:
+
     ```bash
     git worktree add ../automated-kaggle-my-new-dataset my-new-dataset
     ```
 
-3.  **Setup and Run**:
+3. **Setup and Run**:
+
     ```bash
     cd ../automated-kaggle-my-new-dataset
     # Add your data files to the local data/ folder (git-ignored)
@@ -81,8 +91,9 @@ To start a new competition or dataset experiment without cluttering the `main` b
     python main.py
     ```
 
-4.  **Sync with Core Engine**:
+4. **Sync with Core Engine**:
     If updates are made to the core engine on the `main` branch, merge them into your dataset worktree:
+
     ```bash
     # Inside the dataset worktree directory:
     git merge main
@@ -93,10 +104,9 @@ To start a new competition or dataset experiment without cluttering the `main` b
 
 When the pipeline runs within a worktree, the `git_manager.py` respects the current branch context. All agent iterations are committed directly to the dataset branch within that worktree.
 
-
 ## CI/CD and Testing
 
-This template includes a GitHub Actions workflow (`.github/workflows/titanic_ci.yml`) that automatically validates the pipeline on every push to `main` using the classic [Titanic dataset](https://www.kaggle.com/competitions/titanic/overview). It runs the EDA and Baseline engines with `iterations: 0` to skip LLM calls entirely, ensuring the core pipeline is always functional at zero API cost.
+This template includes a GitHub Actions workflow (`.github/workflows/titanic_ci.yml`) that automatically validates the pipeline on every push to `main` using the classic [Titanic dataset](https://www.kaggle.com/competitions/titanic/overview). It runs the EDA and Baseline engines with `feature_iterations: 0` and `tuning_iterations: 0` to skip LLM calls entirely, ensuring the core pipeline is always functional at zero API cost.
 
 The test configuration lives at `tests/titanic_config.yaml` and can also be run **locally**:
 
@@ -104,6 +114,8 @@ The test configuration lives at `tests/titanic_config.yaml` and can also be run 
 kaggle competitions download -c titanic -p data/titanic && unzip data/titanic/titanic.zip -d data/titanic/
 python main.py --config tests/titanic_config.yaml -y
 ```
+
+> **Note on Local Testing (`titanic-local`)**: If you run the CI config or local tests while on your `main` branch, the orchestrator detects that the exact dataset branch `titanic` might already be heavily modified or checked out in a sibling worktree. To avoid merge conflicts and accidental overwrites of your real Titanic experiments, the Git Manager automatically falls back to creating and using a temporary `titanic-local` branch. This allows you to safely test the end-to-end pipeline locally without corrupting your primary dataset branch.
 
 **Required GitHub Repository Secret:**
 

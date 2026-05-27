@@ -51,11 +51,13 @@ test_path: "data/titanic/test.csv"
 model: moonshot/kimi-k2.6
 temperature: 1
 
-# iterations: The maximum number of improvement cycles the Agentic LLM should perform.
-# In each iteration, the LLM analyzes previous results and proposes script modifications.
-# Examples: 5, 10, 20, 50
-# Set to 0 to skip the LLM agent loop (baseline-only run)
-iterations: 5
+# feature_iterations: Number of cycles dedicated strictly to feature engineering using default model.
+# Examples: 5, 10, 20
+feature_iterations: 5
+
+# tuning_iterations: Number of cycles dedicated to architecture changes, ensembling, and hyperparameter tuning.
+# Examples: 2, 5, 10
+tuning_iterations: 2
 
 # --- PIPELINE TUNING & METRICS ---
 
@@ -117,3 +119,6 @@ wandb:
 # Only needed if using an "ollama/*" model. Default: http://localhost:11434
 # Examples: "http://localhost:11434", "http://192.168.1.100:11434", ~
 ollama_base_url: ~
+
+use_llm_file_api: false
+

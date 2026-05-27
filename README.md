@@ -81,7 +81,8 @@ dataset_path: "data/train.csv"
 target_col: "target"
 test_path: "data/test.csv"
 metric: "log_loss"
-iterations: 5
+feature_iterations: 5
+tuning_iterations: 2
 timeout: 600
 ```
 
