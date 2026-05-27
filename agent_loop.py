@@ -237,7 +237,7 @@ The script is stable. Your goal is to maximize the CV score by improving the dat
             mission_text = """MISSION (ARCHITECTURE & TUNING MODE):
 The feature engineering phase is complete and locked.
 - STRICT RULE: Do NOT add, remove, or modify the feature engineering or data preprocessing steps.
-- FOCUS: Your goal is to maximize the CV score by optimizing the model architecture. Swap models (XGBoost, CatBoost), build complex ensembles (StackingClassifier/Voting), and tune hyperparameters."""
+- FOCUS: Aggressively experiment with the feature space. You MUST propose a new feature representation, but you are also highly encouraged to PRUNE or drop unimportant/noisy features (using pandas `.drop()` or scikit-learn feature selection like `SelectKBest`) to prevent overfitting."""
 
         log_stage(f"Iteration {i} [{state_name}]")
         log_info(f"Active Mode for Iteration {i}: {state_name}")
@@ -265,7 +265,7 @@ RULES (your script MUST follow ALL of these):
 6. PREDICTIONS: For `raw_submission.csv`, always output continuous probabilities via `predict_proba(test_X)[:, 1]`. No thresholding — another script handles Kaggle formatting.
 """
 
-        prompt = f"{base_prompt}\n=== CURRENT SCRIPT ===\n```python\n{current_script}\n```\n\n{memory_string}\n\n{mission_text}\nOutput ONLY the full modified Python code wrapped in ```python ... ``` blocks. No other text."
+        prompt = f"{base_prompt}\n=== CURRENT SCRIPT ===\n```python\n{current_script}\n```\n\n{memory_string}\n\n{mission_text}\nFirst, provide a brief 1-2 sentence explanation of your strategy or fix. Then, output the full modified Python code wrapped in ```python ... ``` blocks."
         
         if not skip_confirmation:
             log_info(f"Preparing to call LLM for iteration {i}.")
@@ -393,14 +393,18 @@ RULES (your script MUST follow ALL of these):
             improved = (new_score > current_best_score) if higher_is_better else (new_score < current_best_score)
             
             if wandb_enabled:
+                system_prompt = "\n".join([m.get("content", "") for m in file_messages if m.get("role") == "system"])
+                user_prompt = prompt
                 
                 wandb.log({
                     "cv_score": new_score, 
                     "improved": improved,
                     "iteration": len(history) + 1,
                     "model_used": model_name,
+                    "mode": state_name,
                     "llm_summary": wandb.Html(f"<pre>{llm_summary}</pre>"),
-                    "prompt": wandb.Html(f"<pre>{prompt}</pre>")
+                    "system_prompt": wandb.Html(f"<pre>{system_prompt}</pre>"),
+                    "user_prompt": wandb.Html(f"<pre>{user_prompt}</pre>")
                 })
             
             if improved:
