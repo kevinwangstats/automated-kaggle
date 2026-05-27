@@ -292,7 +292,7 @@ RULES (your script MUST follow ALL of these):
                 if not api_key:
                     if "moonshot" in model_name.lower() or "kimi" in model_name.lower():
                         api_key = os.environ.get("MOONSHOT_API_KEY")
-                        base_url = "https://api.moonshot.cn/v1"
+                        base_url = "https://api.moonshot.ai/v1"
                     elif "openai" in model_name.lower() or "gpt" in model_name.lower():
                         api_key = os.environ.get("OPENAI_API_KEY")
                 
