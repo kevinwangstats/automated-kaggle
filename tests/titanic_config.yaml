@@ -70,7 +70,7 @@ metric: "roc_auc"
 # max_rows: Limits the number of rows loaded into memory to prevent OOM errors on large datasets.
 # Set to null or ~ to load all rows.
 # Examples: 10000, 100000, 500000, ~, null
-max_rows: 1000
+max_rows: ~
 
 # timeout: The maximum time (in seconds) allowed for a single generated training script to run.
 # Prevents the pipeline from hanging on infinite loops or extremely slow training code.
