@@ -59,3 +59,6 @@ auto_kaggle_submit: "never"
 
 # The URL where your local Ollama instance is running
 ollama_base_url: ~
+
+use_llm_file_api: false
+

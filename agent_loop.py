@@ -19,6 +19,7 @@ import urllib.error
 import wandb
 import weave
 import kaggle_ops
+import llm_file_ops
 from pathlib import Path
 from litellm import completion
 from litellm.exceptions import Timeout, BadRequestError, AuthenticationError
@@ -167,7 +168,8 @@ def run_agent_loop(
     available_models: list = None,
     workspace_mgr=None,
     strict_mode: bool = False,
-    ci_test_mode: bool = False
+    ci_test_mode: bool = False,
+    use_llm_file_api: bool = False
 ):
     agent_loop_start_time = time.time()
     if available_models is None:
@@ -279,7 +281,26 @@ RULES (your script MUST follow ALL of these):
             log_stage(f"Calling LLM: {model_name}")
             
             user_message = {"role": "user", "content": prompt}
-            file_messages = get_file_messages(["train_model.py", "EDA.md"])
+            
+            file_messages = None
+            if use_llm_file_api:
+                # Resolve credentials for the file API
+                api_key = os.environ.get("LLM_FILE_API_KEY")
+                base_url = os.environ.get("LLM_FILE_BASE_URL", "https://api.openai.com/v1")
+                
+                # Fallbacks based on common providers if explicit file API keys aren't set
+                if not api_key:
+                    if "moonshot" in model_name.lower() or "kimi" in model_name.lower():
+                        api_key = os.environ.get("MOONSHOT_API_KEY")
+                        base_url = "https://api.moonshot.cn/v1"
+                    elif "openai" in model_name.lower() or "gpt" in model_name.lower():
+                        api_key = os.environ.get("OPENAI_API_KEY")
+                
+                file_messages = llm_file_ops.get_llm_file_messages(["train_model.py", "EDA.md"], api_key=api_key, base_url=base_url)
+            
+            if file_messages is None:
+                file_messages = get_file_messages(["train_model.py", "EDA.md"])
+                
             final_messages = file_messages + [user_message]
 
             completion_kwargs = {

@@ -110,3 +110,9 @@ wandb:
 # Only needed if using an "ollama/*" model. Default: http://localhost:11434
 # Examples: "http://localhost:11434", "http://192.168.1.100:11434", ~
 ollama_base_url: ~
+
+# use_llm_file_api: If true, uses the LLM provider's file upload API for long context
+# parsing and caching instead of local truncation. Requires LLM_FILE_API_KEY
+# environment variable if different from the default model key.
+# Examples: true, false
+use_llm_file_api: false
