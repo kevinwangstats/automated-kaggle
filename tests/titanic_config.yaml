@@ -49,11 +49,13 @@ test_path: "data/titanic/test.csv"
 # model: gemini/gemini-2.5-flash-lite
 model: deepseek/deepseek-v4-pro
 
-# iterations: The maximum number of improvement cycles the Agentic LLM should perform.
-# In each iteration, the LLM analyzes previous results and proposes script modifications.
-# Examples: 5, 10, 20, 50
-# Set to 0 to skip the LLM agent loop (baseline-only run)
-iterations: 5
+# feature_iterations: Number of cycles dedicated strictly to feature engineering using default model.
+# Examples: 5, 10, 20
+feature_iterations: 5
+
+# tuning_iterations: Number of cycles dedicated to architecture changes, ensembling, and hyperparameter tuning.
+# Examples: 2, 5, 10
+tuning_iterations: 2
 
 # --- PIPELINE TUNING & METRICS ---
 

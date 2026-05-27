@@ -43,7 +43,8 @@ def main():
         test_path = config.get('test_path')
         metric = config.get('metric')
         pred_type = config.get('pred_type', 'prob')
-        iterations = config.get('iterations', 5)
+        feature_iterations = config.get('feature_iterations', 5)
+        tuning_iterations = config.get('tuning_iterations', 2)
         timeout = config.get('timeout', 600)
         model = config.get('model', None)
         temperature = config.get('temperature', 0.4)
@@ -161,7 +162,8 @@ def main():
                     "dataset_path": dataset_path,
                     "target_col": target_col,
                     "metric": metric,
-                    "iterations": iterations,
+                    "feature_iterations": feature_iterations,
+                    "tuning_iterations": tuning_iterations,
                     "model": model,
                     "max_rows": max_rows
                 }
@@ -358,7 +360,8 @@ def main():
             git_mgr=git_mgr,
             task=task,
             dataset_branch=dataset_branch,
-            max_iterations=iterations,
+            feature_iterations=feature_iterations,
+            tuning_iterations=tuning_iterations,
             skip_confirmation=args.yes,
             timeout=timeout,
             model=model,

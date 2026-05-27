@@ -33,8 +33,9 @@ metric: "roc_auc"
 # Titanic requires discrete class predictions (0 or 1), not probabilities
 pred_type: "0/1"
 
-# Set to 1 to test one full cycle of the LLM agent loop
-iterations: 1
+# Set feature_iterations to 1 to test one full cycle of the LLM agent loop
+feature_iterations: 1
+tuning_iterations: 0
 
 # Generous timeout because CPU inference on GitHub runners is slower
 timeout: 600

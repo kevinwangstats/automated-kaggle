@@ -45,10 +45,13 @@ model: ollama/qwen3.5:2b
 # Examples: 0.2, 0.4, 0.7
 temperature: 0.4
 
-# iterations: The maximum number of improvement cycles the Agentic LLM should perform.
-# In each iteration, the LLM analyzes previous results and proposes script modifications.
-# Examples: 5, 10, 20, 50
-iterations: 5
+# feature_iterations: Number of cycles dedicated strictly to feature engineering using default model.
+# Examples: 5, 10, 20
+feature_iterations: 5
+
+# tuning_iterations: Number of cycles dedicated to architecture changes, ensembling, and hyperparameter tuning.
+# Examples: 2, 5, 10
+tuning_iterations: 5
 
 # --- PIPELINE TUNING & METRICS ---
 
