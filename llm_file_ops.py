@@ -1,6 +1,6 @@
 import os
-import requests
 from pathlib import Path
+from openai import OpenAI
 from logger import log_info, log_error
 
 def get_llm_file_messages(file_paths: list, api_key: str, base_url: str = "https://api.openai.com/v1") -> list:
@@ -14,10 +14,14 @@ def get_llm_file_messages(file_paths: list, api_key: str, base_url: str = "https
         log_info("API key not found. Falling back to local file reading.")
         return None
         
-    headers = {"Authorization": f"Bearer {api_key}"}
-    
-    # Strip trailing slashes from base_url for consistent endpoint construction
-    base_url = base_url.rstrip("/")
+    try:
+        client = OpenAI(
+            api_key=api_key,
+            base_url=base_url
+        )
+    except Exception as e:
+        log_error("Failed to initialize OpenAI client for file extraction.", e)
+        return None
     
     for fp in file_paths:
         path = Path(fp)
@@ -27,28 +31,13 @@ def get_llm_file_messages(file_paths: list, api_key: str, base_url: str = "https
         log_info(f"Uploading {fp} to LLM File API for extraction...")
         try:
             # 1. Upload
-            url_upload = f"{base_url}/files"
-            with open(path, "rb") as f:
-                files = {
-                    "file": (path.name, f, "application/octet-stream"),
-                    "purpose": (None, "file-extract")
-                }
-                resp = requests.post(url_upload, headers=headers, files=files)
-            resp.raise_for_status()
-            file_id = resp.json()["id"]
+            file_object = client.files.create(
+                file=path,
+                purpose="file-extract"
+            )
             
             # 2. Extract
-            url_content = f"{base_url}/files/{file_id}/content"
-            content_resp = requests.get(url_content, headers=headers)
-            content_resp.raise_for_status()
-            
-            # API returns {"content": "..."} or raw text depending on exact behavior,
-            # but standard is JSON with 'content'. Let's handle both.
-            try:
-                json_data = content_resp.json()
-                file_content = json_data.get("content", content_resp.text)
-            except Exception:
-                file_content = content_resp.text
+            file_content = client.files.content(file_id=file_object.id).text
             
             # 3. Format message
             messages.append({
@@ -58,9 +47,9 @@ def get_llm_file_messages(file_paths: list, api_key: str, base_url: str = "https
             
             # Delete file to avoid hitting limits
             try:
-                requests.delete(f"{base_url}/files/{file_id}", headers=headers)
+                client.files.delete(file_object.id)
             except Exception as e:
-                log_error(f"Failed to clean up file {file_id}", e)
+                log_error(f"Failed to clean up file {file_object.id}", e)
             
         except Exception as e:
             log_error(f"Failed to process {fp} with LLM File API", e)
