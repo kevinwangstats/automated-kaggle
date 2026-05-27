@@ -53,7 +53,7 @@ temperature: 1
 
 # feature_iterations: Number of cycles dedicated strictly to feature engineering using default model.
 # Examples: 5, 10, 20
-feature_iterations: 10
+feature_iterations: 5
 
 # tuning_iterations: Number of cycles dedicated to architecture changes, ensembling, and hyperparameter tuning.
 # Examples: 2, 5, 10
@@ -70,7 +70,7 @@ metric: "roc_auc"
 # max_rows: Limits the number of rows loaded into memory to prevent OOM errors on large datasets.
 # Set to null or ~ to load all rows.
 # Examples: 10000, 100000, 500000, ~, null
-max_rows: ~
+max_rows: 1000
 
 # timeout: The maximum time (in seconds) allowed for a single generated training script to run.
 # Prevents the pipeline from hanging on infinite loops or extremely slow training code.
@@ -120,5 +120,5 @@ wandb:
 # Examples: "http://localhost:11434", "http://192.168.1.100:11434", ~
 ollama_base_url: ~
 
-use_llm_file_api: false
+use_llm_file_api: true
 
