@@ -206,80 +206,54 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         remainder='drop'
     )
 
-    # 5. Feature Selection (NEW REPRESENTATION: L1 pre-filter + LightGBM importance selection)
-    #    Stage 1: L1‑penalized linear model (keep features with importance above median, gentler initial prune)
+    # 5. NEW FEATURE REPRESENTATION: L1 filter → LightGBM selector
     if task == 'classification':
         l1_estimator = LogisticRegression(
             penalty='l1',
             solver='saga',
-            C=0.2,                     # slightly less aggressive than 0.1
+            C=0.3,
             max_iter=2000,
             random_state=42,
             n_jobs=-1
         )
+        l1_selector = SelectFromModel(estimator=l1_estimator, threshold='median')
+        lgb_selector_estimator = LGBMClassifier(
+            n_estimators=100,
+            max_depth=3,
+            random_state=42,
+            n_jobs=-1,
+            verbosity=-1
+        )
     else:
         l1_estimator = Lasso(alpha=0.005, random_state=42, max_iter=2000)
-
-    l1_selector = SelectFromModel(
-        estimator=l1_estimator,
-        threshold='median',           # keep features above median importance
-        max_features=None
-    )
-
-    #    Stage 2: LightGBM-based selector – the model itself selects the most predictive features
-    if task == 'classification':
-        lgb_selector_estimator = LGBMClassifier(
-            n_estimators=200,
-            learning_rate=0.05,
-            num_leaves=15,
-            max_depth=3,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            reg_alpha=0.1,
-            reg_lambda=0.1,
-            random_state=42,
-            n_jobs=-1,
-            class_weight='balanced' if len(np.unique(y)) == 2 else None,
-            verbosity=-1
-        )
-    else:
+        l1_selector = SelectFromModel(estimator=l1_estimator, threshold='median')
         lgb_selector_estimator = LGBMRegressor(
-            n_estimators=200,
-            learning_rate=0.05,
-            num_leaves=15,
+            n_estimators=100,
             max_depth=3,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            reg_alpha=0.1,
-            reg_lambda=0.1,
             random_state=42,
             n_jobs=-1,
             verbosity=-1
         )
 
-    lgb_selector = SelectFromModel(
-        estimator=lgb_selector_estimator,
-        threshold='median',          # features with importance above median
-        max_features=None
-    )
+    lgb_selector = SelectFromModel(estimator=lgb_selector_estimator, threshold='median')
 
     # Pipeline for preprocessing + selection (without final model)
     preprocessing_pipeline = Pipeline(steps=[
         ('preprocessor', preprocessor),
         ('variance_thresh', VarianceThreshold(threshold=0.0)),
-        ('l1_select', l1_selector),        # moderate initial prune
-        ('lgb_select', lgb_selector)       # final alignment to learner
+        ('l1_select', l1_selector),
+        ('lgb_select', lgb_selector)
     ])
 
-    # 6. Model configuration with increased capacity and stronger regularization
+    # 6. Model configuration – unchanged from best performing iteration
     num_classes = len(np.unique(y))
     if task == 'classification':
         final_model_base = LGBMClassifier(
             boosting_type='gbdt',
             objective='binary' if num_classes == 2 else 'multiclass',
             n_estimators=10000,
-            learning_rate=0.01,             # slightly higher to converge faster
-            num_leaves=40,                  # a bit more capacity
+            learning_rate=0.01,
+            num_leaves=40,
             max_depth=6,
             subsample=0.75,
             subsample_freq=5,
@@ -288,7 +262,7 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
             reg_lambda=1.5,
             min_child_samples=15,
             class_weight='balanced' if num_classes == 2 else None,
-            early_stopping_rounds=100,      # earlier stopping to avoid overfit
+            early_stopping_rounds=100,
             random_state=42,
             n_jobs=-1,
             verbosity=-1
