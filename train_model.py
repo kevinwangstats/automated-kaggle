@@ -15,8 +15,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.ensemble import (StackingClassifier, StackingRegressor)
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.linear_model import (RidgeClassifier, Ridge, LogisticRegression, Lasso)
-from sklearn.feature_selection import (SelectFromModel, SelectPercentile,
-                                       mutual_info_classif, f_classif, f_regression)
+from sklearn.feature_selection import (SelectFromModel, VarianceThreshold)
 from xgboost import XGBClassifier, XGBRegressor
 from lightgbm import LGBMClassifier, LGBMRegressor
 from catboost import CatBoostClassifier, CatBoostRegressor
@@ -79,26 +78,26 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         )
     preprocessor = ColumnTransformer(transformers=transformers, remainder='drop')
 
-    # New representation pipeline with model-based feature selection
+    # Revised representation pipeline: uses median importance threshold to retain more signals
     if task == 'classification':
         selector_estimator = LGBMClassifier(
-            n_estimators=50, random_state=42, verbosity=-1, n_jobs=-1
+            n_estimators=300, random_state=42, verbosity=-1, n_jobs=-1
         )
         metric = config.get("metric", "roc_auc")
     else:
         selector_estimator = LGBMRegressor(
-            n_estimators=50, random_state=42, verbosity=-1, n_jobs=-1
+            n_estimators=300, random_state=42, verbosity=-1, n_jobs=-1
         )
         metric = config.get("metric", "neg_mean_squared_error")
 
     representation_pipeline = Pipeline(steps=[
-        ('scaler', RobustScaler()),                                         # Outlier-robust scaling
-        ('select', SelectFromModel(selector_estimator, threshold='median')) # Importance-based pruning
+        ('variance', VarianceThreshold(threshold=0.01)),                     # remove near‑constant features
+        ('scaler', RobustScaler()),                                          # robust scaling against outliers
+        ('select', SelectFromModel(selector_estimator, threshold='median'))  # keep features with importance above median
     ])
 
-    # Model definitions (unchanged hyperparameters for ensemble)
+    # Ensemble (unchanged)
     if task == 'classification':
-        n_classes = len(np.unique(y))
         estimators = [
             ('xgb', XGBClassifier(
                 n_estimators=400, max_depth=3, learning_rate=0.03,

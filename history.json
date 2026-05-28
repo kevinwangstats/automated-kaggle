@@ -364,5 +364,21 @@
     "improved": true,
     "agent_reasoning": "We'll enhance the feature representation by applying more aggressive dimensionality reduction and robust scaling to combat overfitting. Specifically, we'll replace `StandardScaler` with `RobustScaler` (to handle outliers) and use `SelectPercentile` with `mutual_info_classif`/`f_regression` to retain only the top 30% most informative features. This should reduce noise and improve CV performance while staying within the locked feature engineering constraints.",
     "mode": "ARCHITECTURE & TUNING MODE"
+  },
+  {
+    "iteration": 45,
+    "commit": "b149609fed01721dd198624ddefa9b9ac42d2ada",
+    "score": 0.8764144850745896,
+    "improved": true,
+    "agent_reasoning": "We'll replace the univariate feature selection with a model-based approach using LightGBM importance to prune noisy features more effectively, while keeping robust scaling. This captures interactions and complex relationships, improving generalization and CV score.",
+    "mode": "ARCHITECTURE & TUNING MODE"
+  },
+  {
+    "iteration": 46,
+    "commit": null,
+    "score": 0.7680754351274542,
+    "improved": false,
+    "agent_reasoning": "We'll enhance the representation by aggressively pruning noisy and near-constant features. First, we'll add a `VarianceThreshold` to drop low\u2011variance columns, then apply robust scaling, and finally use a LightGBM\u2011based selector with a stricter threshold (`mean`) and more trees for better importance estimates. This reduces overfitting and lifts the CV score.",
+    "mode": "ARCHITECTURE & TUNING MODE"
   }
 ]
