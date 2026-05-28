@@ -5,41 +5,20 @@ import json
 import os
 import re
 import argparse
-from pathlib import Path
+import warnings
 from sklearn.model_selection import KFold, cross_val_score
-from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler, FunctionTransformer
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler
 from sklearn.impute import SimpleImputer
-from sklearn.compose import ColumnTransformer, make_column_selector
+from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-from sklearn.metrics import roc_auc_score
-from sklearn.ensemble import StackingClassifier, StackingRegressor
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.linear_model import RidgeClassifier, Ridge, LogisticRegression
-from xgboost import XGBClassifier, XGBRegressor
-from lightgbm import LGBMClassifier, LGBMRegressor
-from catboost import CatBoostClassifier, CatBoostRegressor
+from sklearn.base import clone
+from sklearn.metrics import make_scorer, roc_auc_score, mean_squared_error
+from sklearn.linear_model import RidgeClassifier, Ridge
+from pathlib import Path
+from tqdm import tqdm
+from utils import load_config, clean_column_names
 
-def load_config(config_path="config.yaml"):
-    with open(config_path, "r") as f:
-        config = yaml.safe_load(f)
-    repo_root = Path(os.environ.get("REPO_ROOT", Path.cwd()))
-    if config.get("dataset_path") and not Path(config.get("dataset_path")).is_absolute():
-        config["dataset_path"] = str(repo_root / config["dataset_path"])
-    if config.get("test_path") and not Path(config.get("test_path")).is_absolute():
-        config["test_path"] = str(repo_root / config["test_path"])
-    return config
-
-def _add_features(X_df):
-    """Generic dataset-agnostic feature engineering."""
-    X = X_df.copy()
-    # For categorical/text columns, add length and missing indicator
-    for col in X.select_dtypes(include=['object', 'category', 'string']).columns:
-        X[f"{col}_len"] = X[col].astype(str).replace('nan', '').str.len()
-        X[f"{col}_missing"] = X[col].isnull().astype(int)
-    # For numeric columns, add missing indicator
-    for col in X.select_dtypes(include=np.number).columns:
-        X[f"{col}_missing"] = X[col].isnull().astype(int)
-    return X
+warnings.filterwarnings('ignore')
 
 def train_and_evaluate(config_path="config.yaml", output_dir="."):
     # 1. Load Configuration & Data
@@ -47,131 +26,87 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     dataset_path = config.get("dataset_path")
     target_col = config.get("target_col")
     test_path = config.get("test_path")
-    nrows = config.get("max_rows")
 
-    df = pd.read_csv(dataset_path, nrows=nrows)
+    df = pd.read_csv(dataset_path, nrows=None)
     
     # Basic Preprocessing
     df = df.dropna(subset=[target_col])
     y_raw = df[target_col]
     X = df.drop(columns=[target_col])
     
-    # Sanitize column names
-    X.columns = [re.sub(r'[^\w\s]', '', col).replace(' ', '_') for col in X.columns]
+    X = clean_column_names(X)
     
     task = 'classification' if y_raw.nunique() < 20 else 'regression'
     if task == 'classification':
         le_y = LabelEncoder()
         y = le_y.fit_transform(y_raw)
     else:
-        y = y_raw.values
-
-    # Determine original categorical columns before feature engineering
-    cat_cols = list(X.select_dtypes(include=['object', 'category', 'string']).columns)
+        y = y_raw
 
     # 2. Define Preprocessing Pipeline
-    transformers = [
-        ('num', Pipeline([
-            ('imputer', SimpleImputer(strategy='median')),
-            ('scaler', StandardScaler())
-        ]), make_column_selector(dtype_include=np.number)),
-    ]
-    if len(cat_cols) > 0:
-        transformers.append(
-            ('cat', Pipeline([
+    try:
+        categorical_features = X.select_dtypes(include=['object', 'category', 'str']).columns
+    except TypeError:
+        categorical_features = X.select_dtypes(include=['object', 'category']).columns
+    numerical_features = X.select_dtypes(include=np.number).columns
+
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('num', Pipeline(steps=[
+                ('imputer', SimpleImputer(strategy='median')),
+                ('scaler', StandardScaler())
+            ]), numerical_features),
+            ('cat', Pipeline(steps=[
                 ('imputer', SimpleImputer(strategy='most_frequent')),
                 ('ohe', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
-            ]), cat_cols)
-        )
+            ]), categorical_features)
+        ],
+        remainder='drop'
+    )
 
-    preprocessor = ColumnTransformer(transformers=transformers, remainder='drop')
-
-    # 3. Model Initialization (Stacking Ensemble)
+    # 3. Model Initialization
     if task == 'classification':
-        estimators = [
-            ('xgb', XGBClassifier(
-                n_estimators=800, max_depth=4, learning_rate=0.03,
-                subsample=0.8, colsample_bytree=0.8, min_child_weight=3,
-                gamma=0.1, reg_alpha=0.01, reg_lambda=1.0,
-                random_state=42, n_jobs=-1, eval_metric='logloss'
-            )),
-            ('lgb', LGBMClassifier(
-                n_estimators=800, max_depth=6, learning_rate=0.03,
-                num_leaves=31, subsample=0.8, colsample_bytree=0.8,
-                reg_alpha=0.01, reg_lambda=1.0,
-                random_state=42, verbose=-1, n_jobs=-1
-            )),
-            ('cat', CatBoostClassifier(
-                iterations=800, depth=6, learning_rate=0.03,
-                l2_leaf_reg=3.0, border_count=254,
-                random_seed=42, verbose=False, thread_count=-1,
-                loss_function='Logloss'
-            )),
-            ('ridge', CalibratedClassifierCV(
-                RidgeClassifier(random_state=42), method='sigmoid', cv=3
-            ))
-        ]
-        ensemble = StackingClassifier(
-            estimators=estimators,
-            final_estimator=LogisticRegression(max_iter=2000, random_state=42),
-            passthrough=False,
-            stack_method='predict_proba',
-            cv=3,
-            n_jobs=1
-        )
-        metric = config.get("metric", "roc_auc")
+        model = RidgeClassifier(random_state=42)
     else:
-        estimators = [
-            ('xgb', XGBRegressor(
-                n_estimators=800, max_depth=4, learning_rate=0.03,
-                subsample=0.8, colsample_bytree=0.8, min_child_weight=3,
-                gamma=0.1, reg_alpha=0.01, reg_lambda=1.0,
-                random_state=42, n_jobs=-1
-            )),
-            ('lgb', LGBMRegressor(
-                n_estimators=800, max_depth=6, learning_rate=0.03,
-                num_leaves=31, subsample=0.8, colsample_bytree=0.8,
-                reg_alpha=0.01, reg_lambda=1.0,
-                random_state=42, verbose=-1, n_jobs=-1
-            )),
-            ('cat', CatBoostRegressor(
-                iterations=800, depth=6, learning_rate=0.03,
-                l2_leaf_reg=3.0, border_count=254,
-                random_seed=42, verbose=False, thread_count=-1,
-                loss_function='RMSE'
-            )),
-            ('ridge', Ridge(random_state=42))
-        ]
-        ensemble = StackingRegressor(
-            estimators=estimators,
-            final_estimator=Ridge(random_state=42),
-            passthrough=False,
-            cv=3,
-            n_jobs=1
-        )
-        metric = config.get("metric", "neg_mean_squared_error")
+        model = Ridge(random_state=42)
+
 
     # 4. Create Full Pipeline
-    pipeline = Pipeline(steps=[
-        ('fe', FunctionTransformer(func=_add_features, validate=False)),
-        ('preprocessor', preprocessor),
-        ('ensemble', ensemble)
-    ])
+    pipeline = Pipeline(steps=[('preprocessor', preprocessor),
+                               ('classifier', model)])
     
     # 5. Cross Validation
     cv = KFold(n_splits=5, shuffle=True, random_state=42)
-    if metric is None:
-        metric = 'roc_auc' if task == 'classification' else 'neg_mean_squared_error'
+    scoring = 'roc_auc'
     
-    print(f"Running Cross-Validation (folds=5, metric={metric})...")
-    try:
-        scores = cross_val_score(pipeline, X, y, cv=cv, scoring=metric, n_jobs=1)
-    except Exception as e:
-        print(f"Warning: requested metric '{metric}' failed ({e}). Falling back to default.")
-        metric = 'roc_auc' if task == 'classification' else 'neg_mean_squared_error'
-        scores = cross_val_score(pipeline, X, y, cv=cv, scoring=metric, n_jobs=1)
+    print(f"Running Cross-Validation (folds=5)...")
+    scores = []
+    # Manual loop to show progress
+    for train_idx, val_idx in tqdm(list(cv.split(X, y)), desc="CV Progress"):
+        X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+        y_train, y_val = y[train_idx], y[val_idx]
+        
+        fold_pipeline = clone(pipeline)
+        fold_pipeline.fit(X_train, y_train)
+        
+        # Scoring
+        if task == 'classification':
+            if scoring == 'roc_auc':
+                if hasattr(fold_pipeline, "predict_proba"):
+                    y_pred = fold_pipeline.predict_proba(X_val)[:, 1]
+                elif hasattr(fold_pipeline, "decision_function"):
+                    y_pred = fold_pipeline.decision_function(X_val)
+                else:
+                    y_pred = fold_pipeline.predict(X_val)
+                score = roc_auc_score(y_val, y_pred)
+            else:
+                score = get_scorer(scoring)(fold_pipeline, X_val, y_val)
+        else:
+            score = get_scorer(scoring)(fold_pipeline, X_val, y_val)
+            
+        scores.append(score)
 
-    final_score = float(np.mean(scores))
+    final_score = np.mean(scores)
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     with open(output_path / "metrics.json", "w") as f:
@@ -183,25 +118,23 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         pipeline.fit(X, y)
         test_df = pd.read_csv(test_path)
         
-        # Preserve original ID column (first column)
-        test_id = test_df.iloc[:, 0].copy()
-        
-        # Prepare test features to match training feature set
-        test_X = test_df.copy()
-        if target_col in test_X.columns:
-            test_X = test_X.drop(columns=[target_col])
-        test_X.columns = [re.sub(r'[^\w\s]', '', col).replace(' ', '_') for col in test_X.columns]
-        test_X = test_X.reindex(columns=X.columns, fill_value=np.nan)
+        # Ensure test columns match train columns before preprocessing
+        test_X = test_df[X.columns.intersection(test_df.columns)]
 
         if task == 'classification':
-            preds = pipeline.predict_proba(test_X)[:, 1]
+            if hasattr(pipeline, "predict_proba"):
+                preds = pipeline.predict_proba(test_X)[:, 1]
+            elif hasattr(pipeline, "decision_function"):
+                preds = pipeline.decision_function(test_X)
+            else:
+                preds = pipeline.predict(test_X)
         else:
             preds = pipeline.predict(test_X)
             
-        submission = pd.DataFrame({
-            test_df.columns[0]: test_id,
-            target_col: preds
-        })
+        submission = pd.DataFrame()
+        if len(test_df.columns) > 0:
+             submission[test_df.columns[0]] = test_df.iloc[:, 0]
+        submission[target_col] = preds
         submission.to_csv(output_path / "raw_submission.csv", index=False)
         print("Saved raw_submission.csv")
 
