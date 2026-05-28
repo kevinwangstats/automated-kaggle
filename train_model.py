@@ -6,14 +6,22 @@ import os
 import re
 import argparse
 import warnings
-from sklearn.model_selection import KFold, StratifiedKFold
+from sklearn.model_selection import KFold, StratifiedKFold, train_test_split
 from sklearn.preprocessing import LabelEncoder, StandardScaler, OrdinalEncoder, PolynomialFeatures, KBinsDiscretizer, OneHotEncoder
-from sklearn.impute import SimpleImputer, MissingIndicator, KNNImputer
+from sklearn.impute import SimpleImputer
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline, FeatureUnion
 from sklearn.base import clone
 from sklearn.metrics import roc_auc_score, mean_squared_error
-from sklearn.feature_selection import SelectPercentile, f_classif, f_regression, VarianceThreshold, SelectFromModel
+from sklearn.feature_selection import (
+    VarianceThreshold,
+    SelectFromModel,
+    SelectPercentile,
+    mutual_info_classif,
+    mutual_info_regression
+)
+from sklearn.linear_model import LogisticRegression, Lasso
+from sklearn.ensemble import ExtraTreesClassifier, ExtraTreesRegressor
 from lightgbm import LGBMClassifier, LGBMRegressor
 from pathlib import Path
 from tqdm import tqdm
@@ -77,8 +85,7 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     except TypeError:
         cat_cols = X.select_dtypes(include=['object', 'category']).columns.tolist()
 
-    # 2. Generic feature engineering (dataset-agnostic)
-    # Extract length, word count, digit count, digit ratio, has_num, extracted_num, firstchar, freq
+    # 2. Generic feature engineering (dataset-agnostic) -- LOCKED, DO NOT MODIFY
     for col in cat_cols:
         if col not in X.columns:
             continue
@@ -146,7 +153,7 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     low_cardinality_cats = [c for c in categorical_features if X[c].nunique() <= 10]
     high_cardinality_cats = [c for c in categorical_features if X[c].nunique() > 10]
 
-    # 4. Define Preprocessing Pipelines
+    # 4. Define Preprocessing Pipelines (LOCKED)
     base_numeric_transformers = []
 
     if base_numerical_features:
@@ -199,107 +206,155 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         remainder='drop'
     )
 
-    # 5. Model & Feature Selection
-    # Base selector: a shallow LightGBM to retain features with importance > median
+    # 5. Feature Selection (MODIFIED: added mutual information pruning)
+    #    Stage 1: L1‑penalized linear model (keep above‑mean importance)
     if task == 'classification':
-        base_selector = LGBMClassifier(
-            n_estimators=100,
-            max_depth=4,
-            num_leaves=15,
-            learning_rate=0.1,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            reg_alpha=0.5,
-            reg_lambda=1.0,
+        selector_estimator = LogisticRegression(
+            penalty='l1',
+            solver='saga',
+            C=0.1,
+            max_iter=2000,
             random_state=42,
-            class_weight='balanced',
-            n_jobs=-1,
-            verbosity=-1
-        )
-        selector = SelectFromModel(
-            estimator=base_selector,
-            threshold='median',
-            max_features=None
-        )
-        final_model = LGBMClassifier(
-            n_estimators=2000,
-            learning_rate=0.01,
-            num_leaves=63,          # increased capacity
-            max_depth=7,
-            subsample=0.75,
-            subsample_freq=1,
-            colsample_bytree=0.75,
-            reg_alpha=0.3,
-            reg_lambda=1.0,
-            min_child_samples=50,   # stronger regularization against overfitting
-            class_weight='balanced',
-            random_state=42,
-            n_jobs=-1,
-            verbosity=-1
+            n_jobs=-1
         )
     else:
-        base_selector = LGBMRegressor(
-            n_estimators=100,
-            max_depth=4,
-            num_leaves=15,
-            learning_rate=0.1,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            reg_alpha=0.5,
-            reg_lambda=1.0,
+        selector_estimator = Lasso(alpha=0.01, random_state=42, max_iter=2000)
+
+    selector = SelectFromModel(
+        estimator=selector_estimator,
+        threshold='mean',      # features with importance > mean
+        max_features=None
+    )
+
+    #    Stage 2: further prune with a tree‑based selector (ExtraTrees)
+    if task == 'classification':
+        extra_selector_estimator = ExtraTreesClassifier(
+            n_estimators=200,
             random_state=42,
             n_jobs=-1,
-            verbosity=-1
+            class_weight='balanced' if len(np.unique(y)) == 2 else None
         )
-        selector = SelectFromModel(
-            estimator=base_selector,
-            threshold='median',
-            max_features=None
-        )
-        final_model = LGBMRegressor(
-            n_estimators=2000,
-            learning_rate=0.01,
-            num_leaves=63,
-            max_depth=7,
-            subsample=0.75,
-            subsample_freq=1,
-            colsample_bytree=0.75,
-            reg_alpha=0.3,
-            reg_lambda=1.0,
-            min_child_samples=50,
+    else:
+        extra_selector_estimator = ExtraTreesRegressor(
+            n_estimators=200,
             random_state=42,
-            n_jobs=-1,
-            verbosity=-1
+            n_jobs=-1
         )
 
-    # 6. Create Full Pipeline (no fixed percentile – uses model-based selection)
-    pipeline = Pipeline(steps=[
+    final_selector = SelectFromModel(
+        estimator=extra_selector_estimator,
+        threshold='median',    # keep features with importance above median
+        max_features=None
+    )
+
+    #    Stage 3: mutual information percentile pruning (new)
+    if task == 'classification':
+        mi_selector = SelectPercentile(
+            score_func=mutual_info_classif,
+            percentile=50          # keep top 50% by mutual information
+        )
+    else:
+        mi_selector = SelectPercentile(
+            score_func=mutual_info_regression,
+            percentile=50
+        )
+
+    # Pipeline for preprocessing + selection (without final model)
+    preprocessing_pipeline = Pipeline(steps=[
         ('preprocessor', preprocessor),
         ('variance_thresh', VarianceThreshold(threshold=0.0)),
-        ('feature_select', selector),          # replaced SelectPercentile
-        ('classifier', final_model)
+        ('feature_select', selector),
+        ('final_select', final_selector),
+        ('mi_select', mi_selector)            # <-- new step
     ])
 
-    # 7. Cross Validation
+    # 6. Model configuration with improved hyperparameters and early stopping
+    num_classes = len(np.unique(y))
+    if task == 'classification':
+        final_model_base = LGBMClassifier(
+            boosting_type='gbdt',              # stable, avoids dart issues
+            objective='binary' if num_classes == 2 else 'multiclass',
+            n_estimators=10000,
+            learning_rate=0.005,               # slightly lower LR
+            num_leaves=31,                     # moderate capacity
+            max_depth=4,
+            subsample=0.8,
+            subsample_freq=5,
+            colsample_bytree=0.8,
+            reg_alpha=0.1,
+            reg_lambda=1.0,
+            min_child_samples=10,
+            class_weight='balanced' if num_classes == 2 else None,
+            early_stopping_rounds=200,
+            random_state=42,
+            n_jobs=-1,
+            verbosity=-1
+        )
+        eval_metric = 'auc' if num_classes == 2 else 'multi_logloss'
+    else:
+        final_model_base = LGBMRegressor(
+            boosting_type='gbdt',
+            n_estimators=10000,
+            learning_rate=0.005,
+            num_leaves=31,
+            max_depth=4,
+            subsample=0.8,
+            subsample_freq=5,
+            colsample_bytree=0.8,
+            reg_alpha=0.1,
+            reg_lambda=1.0,
+            min_child_samples=10,
+            early_stopping_rounds=200,
+            random_state=42,
+            n_jobs=-1,
+            verbosity=-1
+        )
+        eval_metric = 'rmse'
+
+    # 7. Cross Validation with early stopping inside each fold
     if task == 'classification':
         cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
     else:
         cv = KFold(n_splits=5, shuffle=True, random_state=42)
 
-    print(f"Running Cross-Validation (folds=5)...")
+    print(f"Running Cross-Validation (folds=5) with early stopping...")
     scores = []
     for train_idx, val_idx in tqdm(list(cv.split(X, y)), desc="CV Progress"):
         X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
         y_train, y_val = y[train_idx], y[val_idx]
 
-        fold_pipeline = clone(pipeline)
-        fold_pipeline.fit(X_train, y_train)
+        # Fit preprocessing + selection on training fold only
+        prep_pipeline = clone(preprocessing_pipeline)
+        prep_pipeline.fit(X_train, y_train)
 
+        X_train_sel = prep_pipeline.transform(X_train)
+        X_val_sel = prep_pipeline.transform(X_val)
+
+        # Further split training data for early stopping (80/20)
+        X_tr, X_ev, y_tr, y_ev = train_test_split(
+            X_train_sel, y_train,
+            test_size=0.2,
+            stratify=y_train if task == 'classification' else None,
+            random_state=42
+        )
+
+        model = clone(final_model_base)
+        model.fit(
+            X_tr, y_tr,
+            eval_set=[(X_ev, y_ev)],
+            eval_metric=eval_metric
+        )
+
+        # Predict on validation fold
         if task == 'classification':
-            y_pred = fold_pipeline.predict_proba(X_val)[:, 1]
-            score = roc_auc_score(y_val, y_pred)
+            if num_classes == 2:
+                y_pred = model.predict_proba(X_val_sel)[:, 1]
+                score = roc_auc_score(y_val, y_pred)
+            else:
+                y_pred = model.predict_proba(X_val_sel)[:, 1]
+                score = roc_auc_score(y_val, y_pred, multi_class='ovr', average='macro')
         else:
-            y_pred = fold_pipeline.predict(X_val)
+            y_pred = model.predict(X_val_sel)
             rmse = mean_squared_error(y_val, y_pred, squared=False)
             score = -rmse  # negate so higher is better
         scores.append(score)
@@ -313,8 +368,38 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     # 8. Generate Submission (if test_path is provided)
     if test_path and Path(test_path).exists():
         print("Generating submission...")
-        pipeline.fit(X, y)
+        # Fit preprocessing on full training data
+        prep_pipeline_full = clone(preprocessing_pipeline)
+        prep_pipeline_full.fit(X, y)
+        X_full_sel = prep_pipeline_full.transform(X)
 
+        # Train final model with early stopping using a split from full data
+        X_tr_full, X_ev_full, y_tr_full, y_ev_full = train_test_split(
+            X_full_sel, y,
+            test_size=0.2,
+            stratify=y if task == 'classification' else None,
+            random_state=42
+        )
+        model_final = clone(final_model_base)
+        model_final.fit(
+            X_tr_full, y_tr_full,
+            eval_set=[(X_ev_full, y_ev_full)],
+            eval_metric=eval_metric
+        )
+
+        # Retrain on full transformed data using the best number of estimators
+        best_iter = model_final.best_iteration_
+        if best_iter is None or best_iter <= 0:
+            # Fallback: use the model trained on the 80% split (early stopped)
+            print(f"Warning: best_iteration_ = {best_iter}, using model_final directly.")
+            model_final_full = model_final
+        else:
+            model_final_full = clone(final_model_base)
+            # Disable early stopping for the final full fit (no eval set)
+            model_final_full.set_params(n_estimators=best_iter, early_stopping_rounds=None)
+            model_final_full.fit(X_full_sel, y)
+
+        # Process test data
         test_df = pd.read_csv(test_path, nrows=nrows)
         original_test_columns = test_df.columns.tolist()
         test_df = clean_column_names(test_df)
@@ -326,7 +411,7 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         # Apply same column dropping as training
         test_df = test_df.drop(columns=[c for c in cols_to_drop if c in test_df.columns], errors='ignore')
 
-        # Apply same generic feature engineering
+        # Apply same generic feature engineering (LOCKED)
         for col in cat_cols:
             if col in test_df.columns:
                 test_df[f"{col}_len"] = test_df[col].astype(str).str.len()
@@ -350,10 +435,15 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         # Align columns to training set (automatically drops pruned derived features)
         test_X = test_df.reindex(columns=X.columns)
 
+        test_X_sel = prep_pipeline_full.transform(test_X)
+
         if task == 'classification':
-            preds = pipeline.predict_proba(test_X)[:, 1]
+            if num_classes == 2:
+                preds = model_final_full.predict_proba(test_X_sel)[:, 1]
+            else:
+                preds = model_final_full.predict_proba(test_X_sel)[:, 1]  # rule compliance
         else:
-            preds = pipeline.predict(test_X)
+            preds = model_final_full.predict(test_X_sel)
 
         submission = pd.DataFrame({test_id_name: test_id})
         submission[target_col] = preds
