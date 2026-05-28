@@ -7,13 +7,13 @@ import re
 import argparse
 import warnings
 from sklearn.model_selection import KFold, StratifiedKFold
-from sklearn.preprocessing import LabelEncoder, StandardScaler, OrdinalEncoder, PolynomialFeatures, KBinsDiscretizer
+from sklearn.preprocessing import LabelEncoder, StandardScaler, OrdinalEncoder, PolynomialFeatures, KBinsDiscretizer, OneHotEncoder
 from sklearn.impute import SimpleImputer, MissingIndicator, KNNImputer
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline, FeatureUnion
 from sklearn.base import clone
 from sklearn.metrics import roc_auc_score, mean_squared_error
-from sklearn.feature_selection import SelectPercentile, f_classif, f_regression
+from sklearn.feature_selection import SelectPercentile, f_classif, f_regression, VarianceThreshold
 from lightgbm import LGBMClassifier, LGBMRegressor
 from pathlib import Path
 from tqdm import tqdm
@@ -136,6 +136,10 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         numerical_features = [c for c in numerical_features if c not in derived_to_drop]
         derived_numerical_features = [c for c in derived_numerical_features if c not in derived_to_drop]
 
+    # 3c. Split categorical features by cardinality for mixed encoding
+    low_cardinality_cats = [c for c in categorical_features if X[c].nunique() <= 10]
+    high_cardinality_cats = [c for c in categorical_features if X[c].nunique() > 10]
+
     # 4. Define Preprocessing Pipelines
     base_numeric_transformers = []
 
@@ -167,7 +171,12 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
                 ]))
             )
 
-    categorical_transformer = Pipeline(steps=[
+    categorical_transformer_low = Pipeline(steps=[
+        ('imputer', SimpleImputer(strategy='constant', fill_value='Missing')),
+        ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
+    ])
+
+    categorical_transformer_high = Pipeline(steps=[
         ('imputer', SimpleImputer(strategy='constant', fill_value='Missing')),
         ('ordinal', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1))
     ])
@@ -180,39 +189,46 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
             ('imputer', SimpleImputer(strategy='median')),
             ('scaler', StandardScaler())
         ]), derived_numerical_features))
-    if categorical_features:
-        transformers.append(('cat', categorical_transformer, categorical_features))
+    if low_cardinality_cats:
+        transformers.append(('cat_low', categorical_transformer_low, low_cardinality_cats))
+    if high_cardinality_cats:
+        transformers.append(('cat_high', categorical_transformer_high, high_cardinality_cats))
 
     preprocessor = ColumnTransformer(
         transformers=transformers,
         remainder='drop'
     )
 
-    # 5. Model Initialization (LightGBM with stronger regularization)
+    # 5. Model Initialization (LightGBM with stronger regularization and higher capacity)
     if task == 'classification':
         model = LGBMClassifier(
-            n_estimators=300,
-            learning_rate=0.05,
-            num_leaves=31,
+            n_estimators=2000,
+            learning_rate=0.01,
+            num_leaves=63,
+            max_depth=8,
             subsample=0.8,
             colsample_bytree=0.8,
-            reg_alpha=0.1,
-            reg_lambda=1.0,
+            reg_alpha=0.5,
+            reg_lambda=2.0,
             min_child_samples=20,
+            class_weight='balanced',
+            extra_trees=True,
             random_state=42,
             n_jobs=-1,
             verbosity=-1
         )
     else:
         model = LGBMRegressor(
-            n_estimators=300,
-            learning_rate=0.05,
-            num_leaves=31,
+            n_estimators=2000,
+            learning_rate=0.01,
+            num_leaves=63,
+            max_depth=8,
             subsample=0.8,
             colsample_bytree=0.8,
-            reg_alpha=0.1,
-            reg_lambda=1.0,
+            reg_alpha=0.5,
+            reg_lambda=2.0,
             min_child_samples=20,
+            extra_trees=True,
             random_state=42,
             n_jobs=-1,
             verbosity=-1
@@ -220,13 +236,14 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
 
     # Feature selection to prune low-signal expanded features
     if task == 'classification':
-        selector = SelectPercentile(score_func=f_classif, percentile=80)
+        selector = SelectPercentile(score_func=f_classif, percentile=60)
     else:
-        selector = SelectPercentile(score_func=f_regression, percentile=80)
+        selector = SelectPercentile(score_func=f_regression, percentile=60)
 
     # 6. Create Full Pipeline
     pipeline = Pipeline(steps=[
         ('preprocessor', preprocessor),
+        ('variance_thresh', VarianceThreshold(threshold=0.0)),
         ('feature_select', selector),
         ('classifier', model)
     ])
