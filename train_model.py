@@ -7,12 +7,13 @@ import re
 import argparse
 import warnings
 from sklearn.model_selection import KFold, StratifiedKFold
-from sklearn.preprocessing import LabelEncoder, StandardScaler, OrdinalEncoder
-from sklearn.impute import SimpleImputer, MissingIndicator
+from sklearn.preprocessing import LabelEncoder, StandardScaler, OrdinalEncoder, PolynomialFeatures, KBinsDiscretizer
+from sklearn.impute import SimpleImputer, MissingIndicator, KNNImputer
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline, FeatureUnion
 from sklearn.base import clone
 from sklearn.metrics import roc_auc_score, mean_squared_error
+from sklearn.feature_selection import SelectPercentile, f_classif, f_regression
 from lightgbm import LGBMClassifier, LGBMRegressor
 from pathlib import Path
 from tqdm import tqdm
@@ -63,6 +64,13 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     if cols_to_drop:
         X = X.drop(columns=cols_to_drop)
 
+    # Record base feature types before any engineering
+    base_numerical_features = X.select_dtypes(include=np.number).columns.tolist()
+    try:
+        base_categorical_features = X.select_dtypes(include=['object', 'category', 'str']).columns.tolist()
+    except TypeError:
+        base_categorical_features = X.select_dtypes(include=['object', 'category']).columns.tolist()
+
     # Recompute categorical columns after dropping
     try:
         cat_cols = X.select_dtypes(include=['object', 'category', 'str']).columns.tolist()
@@ -70,15 +78,35 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         cat_cols = X.select_dtypes(include=['object', 'category']).columns.tolist()
 
     # 2. Generic feature engineering (dataset-agnostic)
-    # Extract length, word count, and digit count from all object columns
+    # Extract length, word count, digit count, digit ratio, has_num, extracted_num, firstchar, freq
     for col in cat_cols:
+        if col not in X.columns:
+            continue
         X[f"{col}_len"] = X[col].astype(str).str.len()
         X[f"{col}_words"] = X[col].astype(str).str.split().str.len()
         X[f"{col}_digits"] = X[col].astype(str).apply(lambda x: sum(c.isdigit() for c in str(x)))
+        X[f"{col}_digit_ratio"] = X[f"{col}_digits"] / X[f"{col}_len"].replace(0, 1)
+        X[f"{col}_has_num"] = X[col].astype(str).str.contains(r'\d', regex=True, na=False).astype(int)
+        extracted = X[col].astype(str).str.extract(r'(\d+)', expand=False)
+        X[f"{col}_num_extract"] = pd.to_numeric(extracted, errors='coerce')
+        X[f"{col}_firstchar"] = X[col].astype(str).str[0]
+
+    # Frequency encoding (fit on train only)
+    freq_maps = {}
+    for col in cat_cols:
+        if col not in X.columns:
+            continue
+        if X[col].isnull().all():
+            continue
+        freq = X[col].value_counts(normalize=True, dropna=True)
+        freq_maps[col] = freq.to_dict()
+        X[f"{col}_freq"] = X[col].map(freq_maps[col])
 
     # Group rare categories into '__OTHER__' based on training frequencies
     rare_maps = {}
     for col in cat_cols:
+        if col not in X.columns:
+            continue
         if X[col].isnull().all():
             continue
         freq = X[col].value_counts(normalize=True, dropna=True)
@@ -94,15 +122,50 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     except TypeError:
         categorical_features = X.select_dtypes(include=['object', 'category']).columns.tolist()
     numerical_features = X.select_dtypes(include=np.number).columns.tolist()
+    derived_numerical_features = [c for c in numerical_features if c not in base_numerical_features]
+
+    # 3b. PRUNE: Drop noisy derived numerical features (near-empty or constant)
+    derived_to_drop = []
+    for col in derived_numerical_features:
+        if X[col].isnull().mean() > 0.95:
+            derived_to_drop.append(col)
+        elif X[col].nunique(dropna=False) <= 1:
+            derived_to_drop.append(col)
+    if derived_to_drop:
+        X = X.drop(columns=derived_to_drop)
+        numerical_features = [c for c in numerical_features if c not in derived_to_drop]
+        derived_numerical_features = [c for c in derived_numerical_features if c not in derived_to_drop]
 
     # 4. Define Preprocessing Pipelines
-    numeric_transformer = FeatureUnion(transformer_list=[
-        ('imputed', Pipeline(steps=[
-            ('imputer', SimpleImputer(strategy='median')),
-            ('scaler', StandardScaler())
-        ])),
-        ('missing', MissingIndicator(features='all', sparse=False))
-    ])
+    base_numeric_transformers = []
+
+    if base_numerical_features:
+        base_numeric_transformers.append(
+            ('original', Pipeline(steps=[
+                ('imputer', SimpleImputer(strategy='median')),
+                ('scaler', StandardScaler())
+            ]))
+        )
+        base_numeric_transformers.append(
+            ('missing', MissingIndicator(features='all', sparse=False))
+        )
+        base_numeric_transformers.append(
+            ('knn', KNNImputer(n_neighbors=3))
+        )
+        base_numeric_transformers.append(
+            ('bins', Pipeline(steps=[
+                ('imputer', SimpleImputer(strategy='median')),
+                ('discretizer', KBinsDiscretizer(n_bins=5, encode='ordinal', strategy='quantile', subsample=None))
+            ]))
+        )
+        if len(base_numerical_features) <= 25:
+            base_numeric_transformers.append(
+                ('poly', Pipeline(steps=[
+                    ('imputer', SimpleImputer(strategy='median')),
+                    ('scaler', StandardScaler()),
+                    ('poly', PolynomialFeatures(degree=2, interaction_only=True, include_bias=False))
+                ]))
+            )
 
     categorical_transformer = Pipeline(steps=[
         ('imputer', SimpleImputer(strategy='constant', fill_value='Missing')),
@@ -110,8 +173,13 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     ])
 
     transformers = []
-    if numerical_features:
-        transformers.append(('num', numeric_transformer, numerical_features))
+    if base_numerical_features:
+        transformers.append(('base_num', FeatureUnion(transformer_list=base_numeric_transformers), base_numerical_features))
+    if derived_numerical_features:
+        transformers.append(('derived_num', Pipeline(steps=[
+            ('imputer', SimpleImputer(strategy='median')),
+            ('scaler', StandardScaler())
+        ]), derived_numerical_features))
     if categorical_features:
         transformers.append(('cat', categorical_transformer, categorical_features))
 
@@ -120,15 +188,46 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         remainder='drop'
     )
 
-    # 5. Model Initialization (LightGBM with default hyperparameters)
+    # 5. Model Initialization (LightGBM with stronger regularization)
     if task == 'classification':
-        model = LGBMClassifier(random_state=42)
+        model = LGBMClassifier(
+            n_estimators=300,
+            learning_rate=0.05,
+            num_leaves=31,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            reg_alpha=0.1,
+            reg_lambda=1.0,
+            min_child_samples=20,
+            random_state=42,
+            n_jobs=-1,
+            verbosity=-1
+        )
     else:
-        model = LGBMRegressor(random_state=42)
+        model = LGBMRegressor(
+            n_estimators=300,
+            learning_rate=0.05,
+            num_leaves=31,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            reg_alpha=0.1,
+            reg_lambda=1.0,
+            min_child_samples=20,
+            random_state=42,
+            n_jobs=-1,
+            verbosity=-1
+        )
+
+    # Feature selection to prune low-signal expanded features
+    if task == 'classification':
+        selector = SelectPercentile(score_func=f_classif, percentile=80)
+    else:
+        selector = SelectPercentile(score_func=f_regression, percentile=80)
 
     # 6. Create Full Pipeline
     pipeline = Pipeline(steps=[
         ('preprocessor', preprocessor),
+        ('feature_select', selector),
         ('classifier', model)
     ])
 
@@ -184,12 +283,22 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
                 test_df[f"{col}_len"] = test_df[col].astype(str).str.len()
                 test_df[f"{col}_words"] = test_df[col].astype(str).str.split().str.len()
                 test_df[f"{col}_digits"] = test_df[col].astype(str).apply(lambda x: sum(c.isdigit() for c in str(x)))
+                test_df[f"{col}_digit_ratio"] = test_df[f"{col}_digits"] / test_df[f"{col}_len"].replace(0, 1)
+                test_df[f"{col}_has_num"] = test_df[col].astype(str).str.contains(r'\d', regex=True, na=False).astype(int)
+                extracted = test_df[col].astype(str).str.extract(r'(\d+)', expand=False)
+                test_df[f"{col}_num_extract"] = pd.to_numeric(extracted, errors='coerce')
+                test_df[f"{col}_firstchar"] = test_df[col].astype(str).str[0]
+
+        for col in cat_cols:
+            if col in test_df.columns and col in freq_maps:
+                test_df[f"{col}_freq"] = test_df[col].map(freq_maps[col]).fillna(0)
 
         for col in cat_cols:
             if col in test_df.columns and col in rare_maps:
                 mask = test_df[col].notna() & ~test_df[col].isin(rare_maps[col])
                 test_df.loc[mask, col] = "__OTHER__"
 
+        # Align columns to training set (automatically drops pruned derived features)
         test_X = test_df.reindex(columns=X.columns)
 
         if task == 'classification':
