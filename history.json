@@ -191,5 +191,13 @@
     "improved": false,
     "agent_reasoning": "We\u2019ll replace the previous LightGBM\u2011based feature selector with a new representation: a mutual\u2011information filter (top\u202f50\u202f% features) followed by an ExtraTrees\u2011based thresholding. This removes noise earlier, keeps non\u2011linear interactions that mutual information captures, and provides a robust, diversified feature set before the final model. The L1 pre\u2011filter remains as a linear guard.",
     "mode": "ARCHITECTURE & TUNING MODE"
+  },
+  {
+    "iteration": 24,
+    "commit": "5e7f1d4b31fd9fb5ce173b455b6907938d91632e",
+    "score": 0.8667375644096706,
+    "improved": true,
+    "agent_reasoning": "We replace the previous three\u2011stage selection (mutual\u2011information filter \u2192 L1 pre\u2011filter \u2192 ExtraTrees) with a two\u2011stage approach that better aligns with the final LightGBM model: first, an L1\u2011regularized logistic regression (Lasso for regression) retains features whose coefficients are above the median importance; second, a LightGBM\u2011based **SelectFromModel** (threshold=median) adaptively keeps only the most impactful non\u2011linear features. This reduces noise while retaining signals that LightGBM can actually exploit, raising the cross\u2011validation score.",
+    "mode": "ARCHITECTURE & TUNING MODE"
   }
 ]

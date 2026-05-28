@@ -206,17 +206,9 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         remainder='drop'
     )
 
-    # 5. NEW FEATURE REPRESENTATION: L1 filter → LightGBM selector
+    # 5. NEW FEATURE REPRESENTATION: Mutual Information filter → LightGBM selector
     if task == 'classification':
-        l1_estimator = LogisticRegression(
-            penalty='l1',
-            solver='saga',
-            C=0.3,
-            max_iter=2000,
-            random_state=42,
-            n_jobs=-1
-        )
-        l1_selector = SelectFromModel(estimator=l1_estimator, threshold='median')
+        mi_selector = SelectPercentile(mutual_info_classif, percentile=50)
         lgb_selector_estimator = LGBMClassifier(
             n_estimators=100,
             max_depth=3,
@@ -225,8 +217,7 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
             verbosity=-1
         )
     else:
-        l1_estimator = Lasso(alpha=0.005, random_state=42, max_iter=2000)
-        l1_selector = SelectFromModel(estimator=l1_estimator, threshold='median')
+        mi_selector = SelectPercentile(mutual_info_regression, percentile=50)
         lgb_selector_estimator = LGBMRegressor(
             n_estimators=100,
             max_depth=3,
@@ -241,7 +232,7 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     preprocessing_pipeline = Pipeline(steps=[
         ('preprocessor', preprocessor),
         ('variance_thresh', VarianceThreshold(threshold=0.0)),
-        ('l1_select', l1_selector),
+        ('mi_select', mi_selector),
         ('lgb_select', lgb_selector)
     ])
 
