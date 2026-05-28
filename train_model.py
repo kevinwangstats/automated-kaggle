@@ -13,7 +13,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline, FeatureUnion
 from sklearn.base import clone
 from sklearn.metrics import roc_auc_score, mean_squared_error
-from sklearn.feature_selection import SelectPercentile, f_classif, f_regression, VarianceThreshold
+from sklearn.feature_selection import SelectPercentile, f_classif, f_regression, VarianceThreshold, SelectFromModel
 from lightgbm import LGBMClassifier, LGBMRegressor
 from pathlib import Path
 from tqdm import tqdm
@@ -199,55 +199,85 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         remainder='drop'
     )
 
-    # 5. Model Initialization (LightGBM with stronger regularization and higher capacity)
+    # 5. Model & Feature Selection
+    # Base selector: a shallow LightGBM to retain features with importance > median
     if task == 'classification':
-        model = LGBMClassifier(
-            n_estimators=2000,
-            learning_rate=0.01,
-            num_leaves=31,
-            max_depth=6,
-            subsample=0.7,
-            subsample_freq=1,
-            colsample_bytree=0.7,
-            reg_alpha=1.0,
-            reg_lambda=5.0,
-            min_child_samples=30,
+        base_selector = LGBMClassifier(
+            n_estimators=100,
+            max_depth=4,
+            num_leaves=15,
+            learning_rate=0.1,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            reg_alpha=0.5,
+            reg_lambda=1.0,
+            random_state=42,
             class_weight='balanced',
-            extra_trees=True,
-            random_state=42,
             n_jobs=-1,
             verbosity=-1
         )
-    else:
-        model = LGBMRegressor(
+        selector = SelectFromModel(
+            estimator=base_selector,
+            threshold='median',
+            max_features=None
+        )
+        final_model = LGBMClassifier(
             n_estimators=2000,
             learning_rate=0.01,
-            num_leaves=31,
-            max_depth=6,
-            subsample=0.7,
+            num_leaves=63,          # increased capacity
+            max_depth=7,
+            subsample=0.75,
             subsample_freq=1,
-            colsample_bytree=0.7,
-            reg_alpha=1.0,
-            reg_lambda=5.0,
-            min_child_samples=30,
-            extra_trees=True,
+            colsample_bytree=0.75,
+            reg_alpha=0.3,
+            reg_lambda=1.0,
+            min_child_samples=50,   # stronger regularization against overfitting
+            class_weight='balanced',
+            random_state=42,
+            n_jobs=-1,
+            verbosity=-1
+        )
+    else:
+        base_selector = LGBMRegressor(
+            n_estimators=100,
+            max_depth=4,
+            num_leaves=15,
+            learning_rate=0.1,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            reg_alpha=0.5,
+            reg_lambda=1.0,
+            random_state=42,
+            n_jobs=-1,
+            verbosity=-1
+        )
+        selector = SelectFromModel(
+            estimator=base_selector,
+            threshold='median',
+            max_features=None
+        )
+        final_model = LGBMRegressor(
+            n_estimators=2000,
+            learning_rate=0.01,
+            num_leaves=63,
+            max_depth=7,
+            subsample=0.75,
+            subsample_freq=1,
+            colsample_bytree=0.75,
+            reg_alpha=0.3,
+            reg_lambda=1.0,
+            min_child_samples=50,
             random_state=42,
             n_jobs=-1,
             verbosity=-1
         )
 
-    # Feature selection to prune low-signal expanded features
-    if task == 'classification':
-        selector = SelectPercentile(score_func=f_classif, percentile=25)
-    else:
-        selector = SelectPercentile(score_func=f_regression, percentile=25)
-
-    # 6. Create Full Pipeline
+    # 6. Create Full Pipeline (no fixed percentile – uses model-based selection)
     pipeline = Pipeline(steps=[
         ('preprocessor', preprocessor),
         ('variance_thresh', VarianceThreshold(threshold=0.0)),
-        ('feature_select', selector),
-        ('classifier', model)
+        ('feature_select', selector),          # replaced SelectPercentile
+        ('classifier', final_model)
     ])
 
     # 7. Cross Validation
