@@ -75,12 +75,6 @@ def call_agent_llm(completion_kwargs: dict) -> str:
     
     return "".join(chunks)
 
-@weave.op()
-def call_agent_llm(completion_kwargs: dict) -> str:
-    """Wrapper for LLM completion to enable Weave tracing."""
-    response = completion(**completion_kwargs)
-    return response.choices[0].message.content
-
 def run_training_script(script_path="train_model.py", timeout: int = 600, config_path="config.yaml", workspace_mgr=None):
     # Ensure no stale metrics exist
     metrics_path = Path(workspace_mgr.get_file_path("metrics.json")) if workspace_mgr else Path("metrics.json")
@@ -340,7 +334,7 @@ RULES (your script MUST follow ALL of these):
             log_error("LLM API Call Timed Out", e)
             continue
         except Exception as e:
-            log_error("LLM API Call failed (Timeout or other error)", e)
+            log_error("LLM API Call failed", e)
             if "ollama" in (model_name or "").lower():
                 log_info(f"If you haven't pulled this model yet, open a new terminal and run: ollama pull {model_name.replace('ollama/', '')}")
             continue
@@ -478,12 +472,6 @@ RULES (your script MUST follow ALL of these):
     if total_iterations > 0 and failures_in_session == total_iterations:
         if strict_mode:
             raise RuntimeError(f"All {total_iterations} agent iterations failed during this session. See logs for details.")
-        else:
-            log_stage("WARNING: All agent iterations failed during this session. Continuing pipeline gracefully.")
-
-    if max_iterations > 0 and failures_in_session == max_iterations:
-        if strict_mode:
-            raise RuntimeError(f"All {max_iterations} agent iterations failed during this session. See logs for details.")
         else:
             log_stage("WARNING: All agent iterations failed during this session. Continuing pipeline gracefully.")
 
