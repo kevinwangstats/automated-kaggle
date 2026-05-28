@@ -8,14 +8,15 @@ import argparse
 from pathlib import Path
 from sklearn.model_selection import StratifiedKFold, KFold, cross_val_score
 from sklearn.preprocessing import (LabelEncoder, OneHotEncoder, StandardScaler,
-                                   FunctionTransformer)
+                                   RobustScaler, FunctionTransformer)
 from sklearn.impute import SimpleImputer
 from sklearn.compose import ColumnTransformer, make_column_selector
 from sklearn.pipeline import Pipeline
 from sklearn.ensemble import (StackingClassifier, StackingRegressor)
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.linear_model import (RidgeClassifier, Ridge, LogisticRegression, Lasso)
-from sklearn.feature_selection import SelectFromModel
+from sklearn.feature_selection import (SelectFromModel, SelectPercentile,
+                                       mutual_info_classif, f_classif, f_regression)
 from xgboost import XGBClassifier, XGBRegressor
 from lightgbm import LGBMClassifier, LGBMRegressor
 from catboost import CatBoostClassifier, CatBoostRegressor
@@ -78,24 +79,23 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         )
     preprocessor = ColumnTransformer(transformers=transformers, remainder='drop')
 
-    # New representation: L1-based feature selection with scaling
+    # Aggressive feature selection and robust scaling for better generalization
+    if task == 'classification':
+        # Use mutual information for classification, selecting top 30% features
+        feature_selector = SelectPercentile(score_func=mutual_info_classif, percentile=30)
+        metric = config.get("metric", "roc_auc")
+    else:
+        feature_selector = SelectPercentile(score_func=f_regression, percentile=30)
+        metric = config.get("metric", "neg_mean_squared_error")
+
+    representation_pipeline = Pipeline(steps=[
+        ('scaler', RobustScaler()),          # Outlier-robust scaling
+        ('selector', feature_selector)       # Keep only top 30% features
+    ])
+
+    # Model definitions (kept from original, but could be tuned further if needed)
     if task == 'classification':
         n_classes = len(np.unique(y))
-        if n_classes > 2:
-            # multiclass – saga solver supports L1 and multinomial
-            selector_estimator = LogisticRegression(
-                penalty='l1', solver='saga', C=0.1,
-                random_state=42, max_iter=5000, n_jobs=-1
-            )
-        else:
-            # binary – liblinear is efficient for L1
-            selector_estimator = LogisticRegression(
-                penalty='l1', solver='liblinear', C=0.1,
-                random_state=42, max_iter=5000
-            )
-        feature_selector = SelectFromModel(selector_estimator, threshold='mean')
-
-        # Ensemble for classification
         estimators = [
             ('xgb', XGBClassifier(
                 n_estimators=400, max_depth=3, learning_rate=0.03,
@@ -129,12 +129,7 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
             cv=5,
             n_jobs=1
         )
-        metric = config.get("metric", "roc_auc")
     else:
-        # Regression
-        selector_estimator = Lasso(alpha=0.01, random_state=42, max_iter=5000)
-        feature_selector = SelectFromModel(selector_estimator, threshold='mean')
-
         estimators = [
             ('xgb', XGBRegressor(
                 n_estimators=400, max_depth=3, learning_rate=0.03,
@@ -163,13 +158,6 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
             cv=5,
             n_jobs=1
         )
-        metric = config.get("metric", "neg_mean_squared_error")
-
-    # Full pipeline with new representation (scaling + L1 selection)
-    representation_pipeline = Pipeline(steps=[
-        ('scaler', StandardScaler()),               # ensure all features are on the same scale for L1
-        ('selector', feature_selector)
-    ])
 
     pipeline = Pipeline(steps=[
         ('fe', FunctionTransformer(func=_add_features, validate=False)),
