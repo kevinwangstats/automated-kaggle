@@ -199,5 +199,64 @@
     "improved": true,
     "agent_reasoning": "We replace the previous three\u2011stage selection (mutual\u2011information filter \u2192 L1 pre\u2011filter \u2192 ExtraTrees) with a two\u2011stage approach that better aligns with the final LightGBM model: first, an L1\u2011regularized logistic regression (Lasso for regression) retains features whose coefficients are above the median importance; second, a LightGBM\u2011based **SelectFromModel** (threshold=median) adaptively keeps only the most impactful non\u2011linear features. This reduces noise while retaining signals that LightGBM can actually exploit, raising the cross\u2011validation score.",
     "mode": "ARCHITECTURE & TUNING MODE"
+  },
+  {
+    "iteration": 25,
+    "commit": "3149660ce67a70fbfcceb70c740a49d8f393fafa",
+    "score": 0.8671811156924605,
+    "improved": true,
+    "agent_reasoning": "We'll replace the linear L1 pre\u2011selector with a mutual\u2011information percentile filter (retaining the top 50% of features) before the LightGBM\u2011based final selection. This captures non\u2011linear dependencies that are more natural for tree ensembles, while LightGBM still removes any remaining noise, yielding a cleaner feature space that should boost cross\u2011validation performance.",
+    "mode": "ARCHITECTURE & TUNING MODE"
+  },
+  {
+    "iteration": 26,
+    "commit": null,
+    "score": 0.8443038049610824,
+    "improved": false,
+    "agent_reasoning": "The previous selection strategy retained too many noisy features, limiting generalization.  \nI propose a more aggressive pruning pipeline: a mutual\u2011information filter at the 40th percentile, followed by a LightGBM\u2011based `SelectFromModel` using the **mean** importance threshold (stricter than median), and finally a correlation\u2011based filter that removes one of each pair of features whose Pearson correlation exceeds 0.95.  \nThis produces a compact, non\u2011redundant feature set. I\u2019ve also strengthened the LightGBM regularisation (`reg_alpha=0.5`, `reg_lambda=2.5`, `min_child_samples=50`, `max_depth=5`) to work with the reduced dimensionality, helping prevent overfitting and boosting cross\u2011validation performance.",
+    "mode": "ARCHITECTURE & TUNING MODE"
+  },
+  {
+    "iteration": 27,
+    "commit": null,
+    "score": 0.8521113093676387,
+    "improved": false,
+    "agent_reasoning": "No reasoning provided by LLM.",
+    "mode": "ARCHITECTURE & TUNING MODE"
+  },
+  {
+    "iteration": 28,
+    "commit": null,
+    "score": 0.7014476791187882,
+    "improved": false,
+    "agent_reasoning": "No reasoning provided by LLM.",
+    "mode": "ARCHITECTURE & TUNING MODE"
+  },
+  {
+    "iteration": 29,
+    "commit": null,
+    "score": null,
+    "improved": false,
+    "error": "Script Execution Failed:\n\nCV Progress:   0%|          | 0/5 [00:00<?, ?it/s]\nCV Progress:   0%|          | 0/5 [00:00<?, ?it/s]\nTraceback (most recent call last):\n  File \"/Users/kevinwang/projects/automated-kaggle-titanic/train_model.py\", line 452, in <module>\n    train_and_evaluate(args.config, args.output_dir)\n  File \"/Users/kevinwang/projects/automated-kaggle-titanic/train_model.py\", line 322, in train_and_evaluate\n    X_train_sel = prep_pipeline.transform(X_train)\n                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/kevinwang/miniconda3/envs/kaggle/lib/python3.11/site-packages/sklearn/pipeline.py\", line 1035, in transform\n    check_is_fitted(self)\n  File \"/Users/kevinwang/miniconda3/envs/kaggle/lib/python3.11/site-packages/sklearn/utils/validation.py\", line 1705, in check_is_fitted\n    raise NotFittedError(msg % {\"name\": type(estimator).__name__})\nsklearn.exceptions.NotFittedError: This Pipeline instance is not fitted yet. Call 'fit' with appropriate arguments before using this estimator.\n",
+    "agent_reasoning": "We'll apply a three-stage feature selection to prune noisy and redundant signals while preserving non\u2011linear relationships:  \n(1) mutual\u2011information percentile at 30\u202f% to discard the weakest predictors; (2) tree\u2011based SelectFromModel with a LightGBM classifier using median\u2011importance threshold to capture complex interactions; (3) a correlation filter that drops one of each pair whose Pearson correlation exceeds 0.9. The gradient\u2011boosting model is given slightly more capacity (`num_leaves=31`, `max_depth=6`, `min_child_samples=30`) and relaxed regularisation (`reg_alpha=0.1`, `reg_lambda=1.0`, `subsample=0.8`, `colsample_bytree=0.8`) to fully exploit the refined feature set without overfitting.",
+    "mode": "ARCHITECTURE & TUNING MODE"
+  },
+  {
+    "iteration": 30,
+    "commit": null,
+    "score": null,
+    "improved": false,
+    "error": "Script Execution Failed:\n\nCV Progress:   0%|          | 0/5 [00:00<?, ?it/s]\nCV Progress:   0%|          | 0/5 [00:00<?, ?it/s]\nTraceback (most recent call last):\n  File \"/Users/kevinwang/projects/automated-kaggle-titanic/train_model.py\", line 460, in <module>\n    train_and_evaluate(args.config, args.output_dir)\n  File \"/Users/kevinwang/projects/automated-kaggle-titanic/train_model.py\", line 307, in train_and_evaluate\n    X_train_sel = prep_pipeline.transform(X_train)\n                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/kevinwang/miniconda3/envs/kaggle/lib/python3.11/site-packages/sklearn/pipeline.py\", line 1035, in transform\n    check_is_fitted(self)\n  File \"/Users/kevinwang/miniconda3/envs/kaggle/lib/python3.11/site-packages/sklearn/utils/validation.py\", line 1705, in check_is_fitted\n    raise NotFittedError(msg % {\"name\": type(estimator).__name__})\nsklearn.exceptions.NotFittedError: This Pipeline instance is not fitted yet. Call 'fit' with appropriate arguments before using this estimator.\n",
+    "agent_reasoning": "The crash was caused by an obscure `clone` failure that left the pipeline uncleaned. To guarantee a properly fitted pipeline every fold, I now rebuild the preprocessing/selection pipeline from scratch inside each CV iteration using locally\u2011created instances, bypassing `clone` entirely. No other parts are touched.",
+    "mode": "DEBUG MODE"
+  },
+  {
+    "iteration": 31,
+    "commit": null,
+    "score": null,
+    "improved": false,
+    "error": "Script Execution Failed:\n\nCV Progress:   0%|          | 0/5 [00:00<?, ?it/s]\nCV Progress:   0%|          | 0/5 [00:00<?, ?it/s]\nTraceback (most recent call last):\n  File \"/Users/kevinwang/projects/automated-kaggle-titanic/train_model.py\", line 461, in <module>\n    train_and_evaluate(args.config, args.output_dir)\n  File \"/Users/kevinwang/projects/automated-kaggle-titanic/train_model.py\", line 308, in train_and_evaluate\n    X_train_sel = prep_pipeline.transform(X_train)\n                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/kevinwang/miniconda3/envs/kaggle/lib/python3.11/site-packages/sklearn/pipeline.py\", line 1035, in transform\n    check_is_fitted(self)\n  File \"/Users/kevinwang/miniconda3/envs/kaggle/lib/python3.11/site-packages/sklearn/utils/validation.py\", line 1705, in check_is_fitted\n    raise NotFittedError(msg % {\"name\": type(estimator).__name__})\nsklearn.exceptions.NotFittedError: This Pipeline instance is not fitted yet. Call 'fit' with appropriate arguments before using this estimator.\n",
+    "agent_reasoning": "The script crashes because the `prep_pipeline` inside the CV loop is never fitted before calling `transform`. After constructing the preprocessing pipeline, we must fit it on the training fold. The fix is to add a `prep_pipeline.fit(X_train, y_train)` line before the first `transform` call. This is the only logical repair; the rest of the code remains unchanged.",
+    "mode": "DEBUG MODE"
   }
 ]
