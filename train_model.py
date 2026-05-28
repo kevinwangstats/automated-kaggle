@@ -79,21 +79,24 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         )
     preprocessor = ColumnTransformer(transformers=transformers, remainder='drop')
 
-    # Aggressive feature selection and robust scaling for better generalization
+    # New representation pipeline with model-based feature selection
     if task == 'classification':
-        # Use mutual information for classification, selecting top 30% features
-        feature_selector = SelectPercentile(score_func=mutual_info_classif, percentile=30)
+        selector_estimator = LGBMClassifier(
+            n_estimators=50, random_state=42, verbosity=-1, n_jobs=-1
+        )
         metric = config.get("metric", "roc_auc")
     else:
-        feature_selector = SelectPercentile(score_func=f_regression, percentile=30)
+        selector_estimator = LGBMRegressor(
+            n_estimators=50, random_state=42, verbosity=-1, n_jobs=-1
+        )
         metric = config.get("metric", "neg_mean_squared_error")
 
     representation_pipeline = Pipeline(steps=[
-        ('scaler', RobustScaler()),          # Outlier-robust scaling
-        ('selector', feature_selector)       # Keep only top 30% features
+        ('scaler', RobustScaler()),                                         # Outlier-robust scaling
+        ('select', SelectFromModel(selector_estimator, threshold='median')) # Importance-based pruning
     ])
 
-    # Model definitions (kept from original, but could be tuned further if needed)
+    # Model definitions (unchanged hyperparameters for ensemble)
     if task == 'classification':
         n_classes = len(np.unique(y))
         estimators = [
