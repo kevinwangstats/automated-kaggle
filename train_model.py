@@ -12,12 +12,12 @@ from sklearn.preprocessing import (LabelEncoder, OneHotEncoder, StandardScaler,
 from sklearn.impute import SimpleImputer
 from sklearn.compose import ColumnTransformer, make_column_selector
 from sklearn.pipeline import Pipeline
-from sklearn.decomposition import PCA                                      # NEW
-from sklearn.ensemble import (StackingClassifier, StackingRegressor)
+from sklearn.decomposition import PCA
+from sklearn.ensemble import (StackingClassifier, StackingRegressor,
+                               ExtraTreesClassifier)                      # NEW
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.linear_model import (RidgeClassifier, Ridge, LogisticRegression)
-from sklearn.feature_selection import (SelectFromModel, VarianceThreshold,
-                                       SelectPercentile, mutual_info_classif, f_regression)
+from sklearn.feature_selection import (SelectFromModel, VarianceThreshold)
 from xgboost import XGBClassifier, XGBRegressor
 from lightgbm import LGBMClassifier, LGBMRegressor
 from catboost import CatBoostClassifier, CatBoostRegressor
@@ -80,11 +80,14 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         )
     preprocessor = ColumnTransformer(transformers=transformers, remainder='drop')
 
-    # NEW representation pipeline: use PCA instead of model‑based selection.
+    # NEW representation pipeline: tree-based feature selection
     representation_pipeline = Pipeline(steps=[
         ('variance', VarianceThreshold(threshold=0.01)),
         ('quantile', QuantileTransformer(output_distribution='normal', random_state=42)),
-        ('pca', PCA(n_components=0.95, random_state=42))   # keep 95% variance
+        ('feature_selection', SelectFromModel(
+            ExtraTreesClassifier(n_estimators=100, random_state=42, n_jobs=-1),
+            threshold='median'
+        ))
     ])
 
     # ---- Re‑regularized ensemble (unchanged) ----
