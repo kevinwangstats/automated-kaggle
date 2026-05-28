@@ -127,10 +127,16 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     # 3b. PRUNE: Drop noisy derived numerical features (near-empty or constant)
     derived_to_drop = []
     for col in derived_numerical_features:
-        if X[col].isnull().mean() > 0.95:
+        miss_rate = X[col].isnull().mean()
+        n_unique = X[col].nunique(dropna=False)
+        if miss_rate > 0.70:
             derived_to_drop.append(col)
-        elif X[col].nunique(dropna=False) <= 1:
+        elif n_unique <= 1:
             derived_to_drop.append(col)
+        else:
+            top_freq = X[col].value_counts(normalize=True, dropna=False).iloc[0]
+            if top_freq > 0.99:
+                derived_to_drop.append(col)
     if derived_to_drop:
         X = X.drop(columns=derived_to_drop)
         numerical_features = [c for c in numerical_features if c not in derived_to_drop]
@@ -151,18 +157,12 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
             ]))
         )
         base_numeric_transformers.append(
-            ('missing', MissingIndicator(features='all', sparse=False))
-        )
-        base_numeric_transformers.append(
-            ('knn', KNNImputer(n_neighbors=3))
-        )
-        base_numeric_transformers.append(
             ('bins', Pipeline(steps=[
                 ('imputer', SimpleImputer(strategy='median')),
                 ('discretizer', KBinsDiscretizer(n_bins=5, encode='ordinal', strategy='quantile', subsample=None))
             ]))
         )
-        if len(base_numerical_features) <= 25:
+        if len(base_numerical_features) <= 10:
             base_numeric_transformers.append(
                 ('poly', Pipeline(steps=[
                     ('imputer', SimpleImputer(strategy='median')),
@@ -204,13 +204,14 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         model = LGBMClassifier(
             n_estimators=2000,
             learning_rate=0.01,
-            num_leaves=63,
-            max_depth=8,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            reg_alpha=0.5,
-            reg_lambda=2.0,
-            min_child_samples=20,
+            num_leaves=31,
+            max_depth=6,
+            subsample=0.7,
+            subsample_freq=1,
+            colsample_bytree=0.7,
+            reg_alpha=1.0,
+            reg_lambda=5.0,
+            min_child_samples=30,
             class_weight='balanced',
             extra_trees=True,
             random_state=42,
@@ -221,13 +222,14 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         model = LGBMRegressor(
             n_estimators=2000,
             learning_rate=0.01,
-            num_leaves=63,
-            max_depth=8,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            reg_alpha=0.5,
-            reg_lambda=2.0,
-            min_child_samples=20,
+            num_leaves=31,
+            max_depth=6,
+            subsample=0.7,
+            subsample_freq=1,
+            colsample_bytree=0.7,
+            reg_alpha=1.0,
+            reg_lambda=5.0,
+            min_child_samples=30,
             extra_trees=True,
             random_state=42,
             n_jobs=-1,
@@ -236,9 +238,9 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
 
     # Feature selection to prune low-signal expanded features
     if task == 'classification':
-        selector = SelectPercentile(score_func=f_classif, percentile=60)
+        selector = SelectPercentile(score_func=f_classif, percentile=25)
     else:
-        selector = SelectPercentile(score_func=f_regression, percentile=60)
+        selector = SelectPercentile(score_func=f_regression, percentile=25)
 
     # 6. Create Full Pipeline
     pipeline = Pipeline(steps=[
