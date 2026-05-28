@@ -206,86 +206,89 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         remainder='drop'
     )
 
-    # 5. Feature Selection (MODIFIED: added mutual information pruning)
-    #    Stage 1: L1‑penalized linear model (keep above‑mean importance)
+    # 5. Feature Selection (NEW REPRESENTATION: L1 pre-filter + LightGBM importance selection)
+    #    Stage 1: L1‑penalized linear model (keep features with importance above median, gentler initial prune)
     if task == 'classification':
-        selector_estimator = LogisticRegression(
+        l1_estimator = LogisticRegression(
             penalty='l1',
             solver='saga',
-            C=0.1,
+            C=0.2,                     # slightly less aggressive than 0.1
             max_iter=2000,
             random_state=42,
             n_jobs=-1
         )
     else:
-        selector_estimator = Lasso(alpha=0.01, random_state=42, max_iter=2000)
+        l1_estimator = Lasso(alpha=0.005, random_state=42, max_iter=2000)
 
-    selector = SelectFromModel(
-        estimator=selector_estimator,
-        threshold='mean',      # features with importance > mean
+    l1_selector = SelectFromModel(
+        estimator=l1_estimator,
+        threshold='median',           # keep features above median importance
         max_features=None
     )
 
-    #    Stage 2: further prune with a tree‑based selector (ExtraTrees)
+    #    Stage 2: LightGBM-based selector – the model itself selects the most predictive features
     if task == 'classification':
-        extra_selector_estimator = ExtraTreesClassifier(
+        lgb_selector_estimator = LGBMClassifier(
             n_estimators=200,
+            learning_rate=0.05,
+            num_leaves=15,
+            max_depth=3,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            reg_alpha=0.1,
+            reg_lambda=0.1,
             random_state=42,
             n_jobs=-1,
-            class_weight='balanced' if len(np.unique(y)) == 2 else None
+            class_weight='balanced' if len(np.unique(y)) == 2 else None,
+            verbosity=-1
         )
     else:
-        extra_selector_estimator = ExtraTreesRegressor(
+        lgb_selector_estimator = LGBMRegressor(
             n_estimators=200,
+            learning_rate=0.05,
+            num_leaves=15,
+            max_depth=3,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            reg_alpha=0.1,
+            reg_lambda=0.1,
             random_state=42,
-            n_jobs=-1
+            n_jobs=-1,
+            verbosity=-1
         )
 
-    final_selector = SelectFromModel(
-        estimator=extra_selector_estimator,
-        threshold='median',    # keep features with importance above median
+    lgb_selector = SelectFromModel(
+        estimator=lgb_selector_estimator,
+        threshold='median',          # features with importance above median
         max_features=None
     )
-
-    #    Stage 3: mutual information percentile pruning (new)
-    if task == 'classification':
-        mi_selector = SelectPercentile(
-            score_func=mutual_info_classif,
-            percentile=50          # keep top 50% by mutual information
-        )
-    else:
-        mi_selector = SelectPercentile(
-            score_func=mutual_info_regression,
-            percentile=50
-        )
 
     # Pipeline for preprocessing + selection (without final model)
     preprocessing_pipeline = Pipeline(steps=[
         ('preprocessor', preprocessor),
         ('variance_thresh', VarianceThreshold(threshold=0.0)),
-        ('feature_select', selector),
-        ('final_select', final_selector),
-        ('mi_select', mi_selector)            # <-- new step
+        ('l1_select', l1_selector),        # moderate initial prune
+        ('lgb_select', lgb_selector)       # final alignment to learner
     ])
 
-    # 6. Model configuration with improved hyperparameters and early stopping
+    # 6. Model configuration with increased capacity and stronger regularization
     num_classes = len(np.unique(y))
     if task == 'classification':
         final_model_base = LGBMClassifier(
-            boosting_type='gbdt',              # stable, avoids dart issues
+            boosting_type='gbdt',
             objective='binary' if num_classes == 2 else 'multiclass',
             n_estimators=10000,
-            learning_rate=0.005,               # slightly lower LR
-            num_leaves=31,                     # moderate capacity
-            max_depth=4,
-            subsample=0.8,
+            learning_rate=0.01,             # slightly higher to converge faster
+            num_leaves=40,                  # a bit more capacity
+            max_depth=6,
+            subsample=0.75,
             subsample_freq=5,
-            colsample_bytree=0.8,
-            reg_alpha=0.1,
-            reg_lambda=1.0,
-            min_child_samples=10,
+            colsample_bytree=0.75,
+            reg_alpha=0.2,
+            reg_lambda=1.5,
+            min_child_samples=15,
             class_weight='balanced' if num_classes == 2 else None,
-            early_stopping_rounds=200,
+            early_stopping_rounds=100,      # earlier stopping to avoid overfit
             random_state=42,
             n_jobs=-1,
             verbosity=-1
@@ -295,16 +298,16 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         final_model_base = LGBMRegressor(
             boosting_type='gbdt',
             n_estimators=10000,
-            learning_rate=0.005,
-            num_leaves=31,
-            max_depth=4,
-            subsample=0.8,
+            learning_rate=0.01,
+            num_leaves=40,
+            max_depth=6,
+            subsample=0.75,
             subsample_freq=5,
-            colsample_bytree=0.8,
-            reg_alpha=0.1,
-            reg_lambda=1.0,
-            min_child_samples=10,
-            early_stopping_rounds=200,
+            colsample_bytree=0.75,
+            reg_alpha=0.2,
+            reg_lambda=1.5,
+            min_child_samples=15,
+            early_stopping_rounds=100,
             random_state=42,
             n_jobs=-1,
             verbosity=-1
@@ -351,7 +354,7 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
                 y_pred = model.predict_proba(X_val_sel)[:, 1]
                 score = roc_auc_score(y_val, y_pred)
             else:
-                y_pred = model.predict_proba(X_val_sel)[:, 1]
+                y_pred = model.predict_proba(X_val_sel)[:, 1]   # keep compliance
                 score = roc_auc_score(y_val, y_pred, multi_class='ovr', average='macro')
         else:
             y_pred = model.predict(X_val_sel)
@@ -390,7 +393,6 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         # Retrain on full transformed data using the best number of estimators
         best_iter = model_final.best_iteration_
         if best_iter is None or best_iter <= 0:
-            # Fallback: use the model trained on the 80% split (early stopped)
             print(f"Warning: best_iteration_ = {best_iter}, using model_final directly.")
             model_final_full = model_final
         else:
@@ -441,7 +443,7 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
             if num_classes == 2:
                 preds = model_final_full.predict_proba(test_X_sel)[:, 1]
             else:
-                preds = model_final_full.predict_proba(test_X_sel)[:, 1]  # rule compliance
+                preds = model_final_full.predict_proba(test_X_sel)[:, 1]
         else:
             preds = model_final_full.predict(test_X_sel)
 
