@@ -8,14 +8,16 @@ import argparse
 from pathlib import Path
 from sklearn.model_selection import StratifiedKFold, KFold, cross_val_score
 from sklearn.preprocessing import (LabelEncoder, OneHotEncoder, StandardScaler,
-                                   RobustScaler, FunctionTransformer)
+                                   RobustScaler, FunctionTransformer, QuantileTransformer)
 from sklearn.impute import SimpleImputer
 from sklearn.compose import ColumnTransformer, make_column_selector
 from sklearn.pipeline import Pipeline
+from sklearn.decomposition import PCA                                      # NEW
 from sklearn.ensemble import (StackingClassifier, StackingRegressor)
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.linear_model import (RidgeClassifier, Ridge, LogisticRegression, Lasso)
-from sklearn.feature_selection import (SelectFromModel, VarianceThreshold)
+from sklearn.linear_model import (RidgeClassifier, Ridge, LogisticRegression)
+from sklearn.feature_selection import (SelectFromModel, VarianceThreshold,
+                                       SelectPercentile, mutual_info_classif, f_regression)
 from xgboost import XGBClassifier, XGBRegressor
 from lightgbm import LGBMClassifier, LGBMRegressor
 from catboost import CatBoostClassifier, CatBoostRegressor
@@ -78,42 +80,31 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         )
     preprocessor = ColumnTransformer(transformers=transformers, remainder='drop')
 
-    # Revised representation pipeline: uses median importance threshold to retain more signals
-    if task == 'classification':
-        selector_estimator = LGBMClassifier(
-            n_estimators=300, random_state=42, verbosity=-1, n_jobs=-1
-        )
-        metric = config.get("metric", "roc_auc")
-    else:
-        selector_estimator = LGBMRegressor(
-            n_estimators=300, random_state=42, verbosity=-1, n_jobs=-1
-        )
-        metric = config.get("metric", "neg_mean_squared_error")
-
+    # NEW representation pipeline: use PCA instead of model‑based selection.
     representation_pipeline = Pipeline(steps=[
-        ('variance', VarianceThreshold(threshold=0.01)),                     # remove near‑constant features
-        ('scaler', RobustScaler()),                                          # robust scaling against outliers
-        ('select', SelectFromModel(selector_estimator, threshold='median'))  # keep features with importance above median
+        ('variance', VarianceThreshold(threshold=0.01)),
+        ('quantile', QuantileTransformer(output_distribution='normal', random_state=42)),
+        ('pca', PCA(n_components=0.95, random_state=42))   # keep 95% variance
     ])
 
-    # Ensemble (unchanged)
+    # ---- Re‑regularized ensemble (unchanged) ----
     if task == 'classification':
         estimators = [
             ('xgb', XGBClassifier(
-                n_estimators=400, max_depth=3, learning_rate=0.03,
-                subsample=0.7, colsample_bytree=0.7, min_child_weight=7,
-                gamma=0.3, reg_alpha=1.0, reg_lambda=3.0,
+                n_estimators=500, max_depth=3, learning_rate=0.01,
+                subsample=0.6, colsample_bytree=0.5, min_child_weight=10,
+                gamma=0.5, reg_alpha=2.0, reg_lambda=5.0,
                 random_state=42, n_jobs=-1, eval_metric='logloss'
             )),
             ('lgb', LGBMClassifier(
-                n_estimators=400, max_depth=3, learning_rate=0.03,
-                num_leaves=20, subsample=0.7, colsample_bytree=0.7,
-                reg_alpha=1.5, reg_lambda=5.0,
+                n_estimators=500, max_depth=3, learning_rate=0.01,
+                num_leaves=20, subsample=0.6, colsample_bytree=0.5,
+                reg_alpha=5.0, reg_lambda=10.0,
                 random_state=42, verbosity=-1, n_jobs=-1
             )),
             ('cat', CatBoostClassifier(
-                iterations=400, depth=3, learning_rate=0.03,
-                l2_leaf_reg=25.0, border_count=200,
+                iterations=500, depth=3, learning_rate=0.01,
+                l2_leaf_reg=30.0, border_count=200,
                 random_seed=42, verbose=False, thread_count=-1,
                 loss_function='Logloss'
             )),
@@ -124,7 +115,7 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         ensemble = StackingClassifier(
             estimators=estimators,
             final_estimator=LogisticRegression(
-                penalty='l2', C=1.0, max_iter=5000, random_state=42
+                penalty='l2', C=0.5, max_iter=5000, random_state=42
             ),
             passthrough=False,
             stack_method='predict_proba',
@@ -134,28 +125,28 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     else:
         estimators = [
             ('xgb', XGBRegressor(
-                n_estimators=400, max_depth=3, learning_rate=0.03,
-                subsample=0.7, colsample_bytree=0.7, min_child_weight=7,
-                gamma=0.3, reg_alpha=1.0, reg_lambda=3.0,
+                n_estimators=500, max_depth=3, learning_rate=0.01,
+                subsample=0.6, colsample_bytree=0.5, min_child_weight=10,
+                gamma=0.5, reg_alpha=2.0, reg_lambda=5.0,
                 random_state=42, n_jobs=-1
             )),
             ('lgb', LGBMRegressor(
-                n_estimators=400, max_depth=3, learning_rate=0.03,
-                num_leaves=20, subsample=0.7, colsample_bytree=0.7,
-                reg_alpha=1.5, reg_lambda=5.0,
+                n_estimators=500, max_depth=3, learning_rate=0.01,
+                num_leaves=20, subsample=0.6, colsample_bytree=0.5,
+                reg_alpha=5.0, reg_lambda=10.0,
                 random_state=42, verbosity=-1, n_jobs=-1
             )),
             ('cat', CatBoostRegressor(
-                iterations=400, depth=3, learning_rate=0.03,
-                l2_leaf_reg=25.0, border_count=200,
+                iterations=500, depth=3, learning_rate=0.01,
+                l2_leaf_reg=30.0, border_count=200,
                 random_seed=42, verbose=False, thread_count=-1,
                 loss_function='RMSE'
             )),
-            ('ridge', Ridge(alpha=20.0, random_state=42))
+            ('ridge', Ridge(alpha=50.0, random_state=42))
         ]
         ensemble = StackingRegressor(
             estimators=estimators,
-            final_estimator=Ridge(alpha=20.0, random_state=42),
+            final_estimator=Ridge(alpha=50.0, random_state=42),
             passthrough=False,
             cv=5,
             n_jobs=1
@@ -168,9 +159,11 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         ('ensemble', ensemble)
     ])
 
-    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42) if task == 'classification' else KFold(n_splits=5, shuffle=True, random_state=42)
+    metric = config.get("metric")
     if metric is None:
         metric = 'roc_auc' if task == 'classification' else 'neg_mean_squared_error'
+
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42) if task == 'classification' else KFold(n_splits=5, shuffle=True, random_state=42)
 
     print(f"Running Cross-Validation (folds=5, metric={metric})...")
     try:
