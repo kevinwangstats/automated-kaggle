@@ -53,11 +53,11 @@ temperature: 0.5
 
 # feature_iterations: Number of cycles dedicated strictly to feature engineering using default model.
 # Examples: 5, 10, 20
-feature_iterations: 5
+feature_iterations: 2
 
 # tuning_iterations: Number of cycles dedicated to architecture changes, ensembling, and hyperparameter tuning.
 # Examples: 2, 5, 10
-tuning_iterations: 5
+tuning_iterations: 10
 
 # --- PIPELINE TUNING & METRICS ---
 

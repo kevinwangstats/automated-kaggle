@@ -267,5 +267,85 @@
     "prompt": "HUMAN_INTERVENTION",
     "response": "User manually modified train_model.py prior to resuming.\n\n```python\nimport pandas as pd\nimport numpy as np\nimport yaml\nimport json\nimport os\nimport re\nimport argparse\nfrom pathlib import Path\nfrom sklearn.model_selection import KFold, cross_val_score\nfrom sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler, FunctionTransformer\nfrom sklearn.impute import SimpleImputer\nfrom sklearn.compose import ColumnTransformer, make_column_selector\nfrom sklearn.pipeline import Pipeline\nfrom sklearn.metrics import roc_auc_score\nfrom sklearn.ensemble import StackingClassifier, StackingRegressor\nfrom sklearn.calibration import CalibratedClassifierCV\nfrom sklearn.linear_model import RidgeClassifier, Ridge, LogisticRegression\nfrom xgboost import XGBClassifier, XGBRegressor\nfrom lightgbm import LGBMClassifier, LGBMRegressor\nfrom catboost import CatBoostClassifier, CatBoostRegressor\n\ndef load_config(config_path=\"config.yaml\"):\n    with open(config_path, \"r\") as f:\n        config = yaml.safe_load(f)\n    repo_root = Path(os.environ.get(\"REPO_ROOT\", Path.cwd()))\n    if config.get(\"dataset_path\") and not Path(config.get(\"dataset_path\")).is_absolute():\n        config[\"dataset_path\"] = str(repo_root / config[\"dataset_path\"])\n    if config.get(\"test_path\") and not Path(config.get(\"test_path\")).is_absolute():\n        config[\"test_path\"] = str(repo_root / config[\"test_path\"])\n    return config\n\ndef _add_features(X_df):\n    \"\"\"Generic dataset-agnostic feature engineering.\"\"\"\n    X = X_df.copy()\n    # For categorical/text columns, add length and missing indicator\n    for col in X.select_dtypes(include=['object', 'category', 'string']).columns:\n        X[f\"{col}_len\"] = X[col].astype(str).replace('nan', '').str.len()\n        X[f\"{col}_missing\"] = X[col].isnull().astype(int)\n    # For numeric columns, add missing indicator\n    for col in X.select_dtypes(include=np.number).columns:\n        X[f\"{col}_missing\"] = X[col].isnull().astype(int)\n    return X\n\ndef train_and_evaluate(config_path=\"config.yaml\", output_dir=\".\"):\n    # 1. Load Configuration & Data\n    config = load_config(config_path)\n    dataset_path = config.get(\"dataset_path\")\n    target_col = config.get(\"target_col\")\n    test_path = config.get(\"test_path\")\n    nrows = config.get(\"max_rows\")\n\n    df = pd.read_csv(dataset_path, nrows=nrows)\n    \n    # Basic Preprocessing\n    df = df.dropna(subset=[target_col])\n    y_raw = df[target_col]\n    X = df.drop(columns=[target_col])\n    \n    # Sanitize column names\n    X.columns = [re.sub(r'[^\\w\\s]', '', col).replace(' ', '_') for col in X.columns]\n    \n    task = 'classification' if y_raw.nunique() < 20 else 'regression'\n    if task == 'classification':\n        le_y = LabelEncoder()\n        y = le_y.fit_transform(y_raw)\n    else:\n        y = y_raw.values\n\n    # Determine original categorical columns before feature engineering\n    cat_cols = list(X.select_dtypes(include=['object', 'category', 'string']).columns)\n\n    # 2. Define Preprocessing Pipeline\n    transformers = [\n        ('num', Pipeline([\n            ('imputer', SimpleImputer(strategy='median')),\n            ('scaler', StandardScaler())\n        ]), make_column_selector(dtype_include=np.number)),\n    ]\n    if len(cat_cols) > 0:\n        transformers.append(\n            ('cat', Pipeline([\n                ('imputer', SimpleImputer(strategy='most_frequent')),\n                ('ohe', OneHotEncoder(handle_unknown='ignore', sparse_output=False))\n            ]), cat_cols)\n        )\n\n    preprocessor = ColumnTransformer(transformers=transformers, remainder='drop')\n\n    # 3. Model Initialization (Stacking Ensemble)\n    if task == 'classification':\n        estimators = [\n            ('xgb', XGBClassifier(\n                n_estimators=800, max_depth=4, learning_rate=0.03,\n                subsample=0.8, colsample_bytree=0.8, min_child_weight=3,\n                gamma=0.1, reg_alpha=0.01, reg_lambda=1.0,\n                random_state=42, n_jobs=-1, eval_metric='logloss'\n            )),\n            ('lgb', LGBMClassifier(\n                n_estimators=800, max_depth=6, learning_rate=0.03,\n                num_leaves=31, subsample=0.8, colsample_bytree=0.8,\n                reg_alpha=0.01, reg_lambda=1.0,\n                random_state=42, verbose=-1, n_jobs=-1\n            )),\n            ('cat', CatBoostClassifier(\n                iterations=800, depth=6, learning_rate=0.03,\n                l2_leaf_reg=3.0, border_count=254,\n                random_seed=42, verbose=False, thread_count=-1,\n                loss_function='Logloss'\n            )),\n            ('ridge', CalibratedClassifierCV(\n                RidgeClassifier(random_state=42), method='sigmoid', cv=3\n            ))\n        ]\n        ensemble = StackingClassifier(\n            estimators=estimators,\n            final_estimator=LogisticRegression(max_iter=2000, random_state=42),\n            passthrough=False,\n            stack_method='predict_proba',\n            cv=3,\n            n_jobs=1\n        )\n        metric = config.get(\"metric\", \"roc_auc\")\n    else:\n        estimators = [\n            ('xgb', XGBRegressor(\n                n_estimators=800, max_depth=4, learning_rate=0.03,\n                subsample=0.8, colsample_bytree=0.8, min_child_weight=3,\n                gamma=0.1, reg_alpha=0.01, reg_lambda=1.0,\n                random_state=42, n_jobs=-1\n            )),\n            ('lgb', LGBMRegressor(\n                n_estimators=800, max_depth=6, learning_rate=0.03,\n                num_leaves=31, subsample=0.8, colsample_bytree=0.8,\n                reg_alpha=0.01, reg_lambda=1.0,\n                random_state=42, verbose=-1, n_jobs=-1\n            )),\n            ('cat', CatBoostRegressor(\n                iterations=800, depth=6, learning_rate=0.03,\n                l2_leaf_reg=3.0, border_count=254,\n                random_seed=42, verbose=False, thread_count=-1,\n                loss_function='RMSE'\n            )),\n            ('ridge', Ridge(random_state=42))\n        ]\n        ensemble = StackingRegressor(\n            estimators=estimators,\n            final_estimator=Ridge(random_state=42),\n            passthrough=False,\n            cv=3,\n            n_jobs=1\n        )\n        metric = config.get(\"metric\", \"neg_mean_squared_error\")\n\n    # 4. Create Full Pipeline\n    pipeline = Pipeline(steps=[\n        ('fe', FunctionTransformer(func=_add_features, validate=False)),\n        ('preprocessor', preprocessor),\n        ('ensemble', ensemble)\n    ])\n    \n    # 5. Cross Validation\n    cv = KFold(n_splits=5, shuffle=True, random_state=42)\n    if metric is None:\n        metric = 'roc_auc' if task == 'classification' else 'neg_mean_squared_error'\n    \n    print(f\"Running Cross-Validation (folds=5, metric={metric})...\")\n    try:\n        scores = cross_val_score(pipeline, X, y, cv=cv, scoring=metric, n_jobs=1)\n    except Exception as e:\n        print(f\"Warning: requested metric '{metric}' failed ({e}). Falling back to default.\")\n        metric = 'roc_auc' if task == 'classification' else 'neg_mean_squared_error'\n        scores = cross_val_score(pipeline, X, y, cv=cv, scoring=metric, n_jobs=1)\n\n    final_score = float(np.mean(scores))\n    output_path = Path(output_dir)\n    output_path.mkdir(parents=True, exist_ok=True)\n    with open(output_path / \"metrics.json\", \"w\") as f:\n        json.dump({\"cv_score\": final_score}, f)\n\n    # 6. Generate Submission (if test_path is provided)\n    if test_path and Path(test_path).exists():\n        print(\"Generating submission...\")\n        pipeline.fit(X, y)\n        test_df = pd.read_csv(test_path)\n        \n        # Preserve original ID column (first column)\n        test_id = test_df.iloc[:, 0].copy()\n        \n        # Prepare test features to match training feature set\n        test_X = test_df.copy()\n        if target_col in test_X.columns:\n            test_X = test_X.drop(columns=[target_col])\n        test_X.columns = [re.sub(r'[^\\w\\s]', '', col).replace(' ', '_') for col in test_X.columns]\n        test_X = test_X.reindex(columns=X.columns, fill_value=np.nan)\n\n        if task == 'classification':\n            preds = pipeline.predict_proba(test_X)[:, 1]\n        else:\n            preds = pipeline.predict(test_X)\n            \n        submission = pd.DataFrame({\n            test_df.columns[0]: test_id,\n            target_col: preds\n        })\n        submission.to_csv(output_path / \"raw_submission.csv\", index=False)\n        print(\"Saved raw_submission.csv\")\n\n    return final_score\n\nif __name__ == \"__main__\":\n    parser = argparse.ArgumentParser()\n    parser.add_argument(\"--config\", type=str, default=\"config.yaml\", help=\"Path to config file\")\n    parser.add_argument(\"--output_dir\", type=str, default=\".\", help=\"Directory to save outputs\")\n    args = parser.parse_args()\n    train_and_evaluate(args.config, args.output_dir)\n```",
     "error": null
+  },
+  {
+    "iteration": 33,
+    "commit": null,
+    "score": 0.8723446720164457,
+    "improved": false,
+    "agent_reasoning": "We'll add an L1-penalized feature selection step after preprocessing to prune noisy/irrelevant features. This reduces dimensionality and overfitting, while also slightly reducing tree\u2011based models\u2019 complexity to better generalize on small datasets like Titanic. No changes are made to the locked feature engineering or original preprocessing logic.",
+    "mode": "ARCHITECTURE & TUNING MODE"
+  },
+  {
+    "iteration": 34,
+    "commit": null,
+    "score": 0.8862772863433367,
+    "improved": false,
+    "agent_reasoning": "No reasoning provided by LLM.",
+    "mode": "ARCHITECTURE & TUNING MODE"
+  },
+  {
+    "iteration": 35,
+    "commit": null,
+    "score": 0.8830898475356346,
+    "improved": false,
+    "agent_reasoning": "We'll add a **feature selection step after preprocessing**, using a RandomForest to discard low-importance columns. This aggressive pruning reduces noise and overfitting, especially beneficial on small datasets like Titanic. Base model regularisation is also tightened slightly to capitalise on the cleaner feature set.",
+    "mode": "ARCHITECTURE & TUNING MODE"
+  },
+  {
+    "iteration": 36,
+    "commit": null,
+    "score": 0.8844071643960193,
+    "improved": false,
+    "agent_reasoning": "We'll replace the random\u2011forest\u2011based feature selector with a **variance threshold followed by L1\u2011regularised linear selection** (LogisticRegression for classification, Lasso for regression). This combination first drops zero\u2011variance (constant) features, then uses a sparse linear model to keep only the most predictive features (above median coefficient). The new representation is more robust to noise and reduces overfitting, especially on small datasets. No changes are made to the locked preprocessing or feature engineering functions.",
+    "mode": "ARCHITECTURE & TUNING MODE"
+  },
+  {
+    "iteration": 37,
+    "commit": null,
+    "score": 0.8830889267626404,
+    "improved": false,
+    "agent_reasoning": "No reasoning provided by LLM.",
+    "mode": "ARCHITECTURE & TUNING MODE"
+  },
+  {
+    "iteration": 38,
+    "commit": null,
+    "score": 0.8641842662292462,
+    "improved": false,
+    "agent_reasoning": "I'll replace the feature selection stage with a two\u2011phase approach that aggressively reduces dimensionality and captures interactions.  \nFirst, after one\u2011hot encoding, mutual information selects the 50 most predictive raw features. Then polynomial interactions (degree=2, interaction only) are generated among those, and a final L1\u2011regularised logistic regression (classification) or Lasso (regression) prunes the representation, keeping only features above the mean coefficient. With this cleaner, highly informative input the ensemble is less overfitted, and base\u2011model regularisation is tightened accordingly.",
+    "mode": "ARCHITECTURE & TUNING MODE"
+  },
+  {
+    "iteration": 39,
+    "commit": null,
+    "score": 0.8728139480399623,
+    "improved": false,
+    "agent_reasoning": "The current representation pipeline may overfit due to polynomial interactions and overly aggressive L1 selection. I\u2019ll replace it with **a two\u2011step filter** that first keeps the top 25% most relevant features via mutual information, then uses a **light L1 selection** (threshold `'1.25*mean'`) to prune only the weakest signals \u2013 **no polynomial interactions**. This cuts noise and reduces dimensionality, while preserving informative combinations. The stacking final estimator is softened to an L2\u2011regularised LogisticRegression, and base model hyperparameters are tuned for even stronger regularisation.",
+    "mode": "ARCHITECTURE & TUNING MODE"
+  },
+  {
+    "iteration": 40,
+    "commit": null,
+    "score": 0.8757191557044909,
+    "improved": false,
+    "agent_reasoning": "The current feature representation (mutual\u2011information + aggressive L1 pruning) may be discarding too many informative features, leading to underfitting.  \nI replaced it with **tree\u2011based feature selection** using a `RandomForestClassifier`/`RandomForestRegressor` that retains features with importance above the **median** \u2013 this captures non\u2011linear relationships and selects about half the features, providing a richer but less noisy input to the ensemble.  \nBase\u2011model regularisation is kept strong, and the stacking final estimator remains an L2\u2011regularised logistic regression / ridge.",
+    "mode": "ARCHITECTURE & TUNING MODE"
+  },
+  {
+    "iteration": 41,
+    "commit": null,
+    "score": 0.8703118558588537,
+    "improved": false,
+    "agent_reasoning": "No reasoning provided by LLM.",
+    "mode": "ARCHITECTURE & TUNING MODE"
+  },
+  {
+    "iteration": 42,
+    "commit": null,
+    "score": 0.8749263488257835,
+    "improved": false,
+    "agent_reasoning": "No reasoning provided by LLM.",
+    "mode": "ARCHITECTURE & TUNING MODE"
   }
 ]
