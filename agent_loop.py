@@ -302,10 +302,10 @@ RULES (your script MUST follow ALL of these):
                     elif "openai" in model_name.lower() or "gpt" in model_name.lower():
                         api_key = os.environ.get("OPENAI_API_KEY")
                 
-                file_messages = llm_file_ops.get_llm_file_messages(["train_model.py", "EDA.md"], api_key=api_key, base_url=base_url)
+                file_messages = llm_file_ops.get_llm_file_messages(["train_model.py", "EDA.md", "SKILL.md"], api_key=api_key, base_url=base_url)
             
             if file_messages is None:
-                file_messages = get_file_messages(["train_model.py", "EDA.md"])
+                file_messages = get_file_messages(["train_model.py", "EDA.md", "SKILL.md"])
                 
             final_messages = file_messages + [user_message]
 
