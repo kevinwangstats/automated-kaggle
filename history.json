@@ -535,5 +535,29 @@
     "improved": false,
     "agent_reasoning": "**Strategy:** Replace the 70% mutual information selection + PCA with a single `SelectPercentile` set to 60% and remove PCA entirely. This keeps a smaller, directly interpretable set of features that still carry most of the signal, while eliminating the risk of PCA capturing noise on small datasets. No changes to feature engineering or data preprocessing.",
     "mode": "ARCHITECTURE & TUNING MODE"
+  },
+  {
+    "iteration": 66,
+    "commit": "5b30e41691e1411d2c64efc52a6fdb09d7610b14",
+    "score": 0.8777322107724042,
+    "improved": true,
+    "agent_reasoning": "**Strategy:** Keep only the most relevant features by adding a subsequent `SelectFromModel` using an L1\u2011regularized logistic regression after mutual\u2011information selection. This aggressively prunes noise and collinear features, while the initial 75% MI percentile ensures promising signals are retained. No changes to the engineering or preprocessing code.",
+    "mode": "ARCHITECTURE & TUNING MODE"
+  },
+  {
+    "iteration": 67,
+    "commit": null,
+    "score": 0.8680471293568738,
+    "improved": false,
+    "agent_reasoning": "No reasoning provided by LLM.",
+    "mode": "ARCHITECTURE & TUNING MODE"
+  },
+  {
+    "iteration": 68,
+    "commit": null,
+    "score": 0.8735493345904196,
+    "improved": false,
+    "agent_reasoning": "**Strategy:** Keep the top 50 features by mutual information to capture a broad signal, then apply a secondary `SelectFromModel` with an ExtraTrees estimator (threshold = \"median\") to aggressively prune weaker features. This combination adaptively selects a concise, low\u2011noise representation that resists overfitting on small datasets, while preserving important non\u2011linear relationships.",
+    "mode": "ARCHITECTURE & TUNING MODE"
   }
 ]

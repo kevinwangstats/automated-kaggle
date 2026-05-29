@@ -13,11 +13,10 @@ from sklearn.pipeline import Pipeline
 from sklearn.metrics import roc_auc_score, mean_squared_error
 from sklearn.impute import SimpleImputer
 from sklearn.feature_selection import (
-    SelectPercentile, mutual_info_classif, mutual_info_regression,
+    SelectKBest, mutual_info_classif, mutual_info_regression,
     VarianceThreshold, SelectFromModel
 )
-from sklearn.decomposition import PCA
-from sklearn.ensemble import StackingClassifier, StackingRegressor
+from sklearn.ensemble import StackingClassifier, StackingRegressor, ExtraTreesClassifier, ExtraTreesRegressor
 from sklearn.linear_model import LogisticRegression, Ridge, Lasso
 from sklearn.base import clone
 from tqdm import tqdm
@@ -199,32 +198,33 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     )
 
     # ------------------------------------------------------------
-    # ENHANCED FEATURE SELECTION
-    # 1. Remove zero-variance features
-    # 2. Keep top 75% by mutual information (slightly more inclusive)
-    # 3. Aggressive L1-based selection to prune collinear/noisy features
+    # IMPROVED FEATURE REPRESENTATION:
+    # 1) Mutual Information selects top 50 features (or all if fewer).
+    # 2) ExtraTrees-based SelectFromModel prunes to median importance.
+    # Reduces noise and retains non‑linear interactions.
     # ------------------------------------------------------------
-    var_selector = VarianceThreshold(threshold=0.0)
-
     if task == 'classification':
-        mi_selector = SelectPercentile(mutual_info_classif, percentile=75)
-        # L1‑penalised logistic regression with very small C to force sparsity
-        l1_selector = SelectFromModel(
-            LogisticRegression(penalty='l1', solver='liblinear', C=0.05,
-                              random_state=42, max_iter=1000),
-            threshold='median'                 # keep features with importance above median
+        mi_selector = SelectKBest(mutual_info_classif, k=50)
+        et_selector = SelectFromModel(
+            ExtraTreesClassifier(n_estimators=100, random_state=42, n_jobs=-1),
+            threshold='median'
         )
         scoring_fn = roc_auc_score
         cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
     else:
-        mi_selector = SelectPercentile(mutual_info_regression, percentile=75)
-        l1_selector = SelectFromModel(
-            LogisticRegression(penalty='l1', solver='liblinear', C=0.05,
-                              random_state=42, max_iter=1000),
+        mi_selector = SelectKBest(mutual_info_regression, k=50)
+        et_selector = SelectFromModel(
+            ExtraTreesRegressor(n_estimators=100, random_state=42, n_jobs=-1),
             threshold='median'
         )
         scoring_fn = mean_squared_error
         cv = KFold(n_splits=5, shuffle=True, random_state=42)
+
+    # Compose the two feature selection steps
+    feature_selector = Pipeline(steps=[
+        ('mi', mi_selector),
+        ('et', et_selector)
+    ])
 
     # ------------------------------------------------------------
 
@@ -288,12 +288,10 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
             n_jobs=-1
         )
 
-    # Build final pipeline with the new three‑stage feature selection
+    # Build final pipeline with the new two‑stage feature selection
     pipeline = Pipeline(steps=[
         ('preprocessor', preprocessor),
-        ('var_threshold', var_selector),
-        ('mi_selector', mi_selector),
-        ('l1_selector', l1_selector),   # added aggressive pruning
+        ('feature_selector', feature_selector),
         ('model', model)
     ])
 
