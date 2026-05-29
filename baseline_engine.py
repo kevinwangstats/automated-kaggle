@@ -59,7 +59,7 @@ from sklearn.impute import SimpleImputer
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.base import clone
-from sklearn.metrics import make_scorer, roc_auc_score, mean_squared_error
+from sklearn.metrics import make_scorer, roc_auc_score, mean_squared_error, get_scorer
 {imports_str}
 from pathlib import Path
 from tqdm import tqdm
