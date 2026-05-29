@@ -3,58 +3,156 @@ import numpy as np
 import yaml
 import json
 import os
-import re
 import argparse
 from pathlib import Path
-from sklearn.model_selection import StratifiedKFold, KFold, cross_val_score
-from sklearn.preprocessing import (LabelEncoder, OneHotEncoder, StandardScaler,
-                                   RobustScaler, FunctionTransformer, QuantileTransformer)
-from sklearn.impute import SimpleImputer
-from sklearn.compose import ColumnTransformer, make_column_selector
+from sklearn.model_selection import StratifiedKFold, KFold
+from sklearn.preprocessing import LabelEncoder, StandardScaler, OrdinalEncoder
+from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-from sklearn.decomposition import PCA
-from sklearn.ensemble import (StackingClassifier, StackingRegressor,
-                               ExtraTreesClassifier)                      # NEW
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.linear_model import (RidgeClassifier, Ridge, LogisticRegression)
-from sklearn.feature_selection import (SelectFromModel, VarianceThreshold)
-from xgboost import XGBClassifier, XGBRegressor
-from lightgbm import LGBMClassifier, LGBMRegressor
-from catboost import CatBoostClassifier, CatBoostRegressor
+from sklearn.metrics import roc_auc_score, mean_squared_error
+from sklearn.impute import SimpleImputer
+from sklearn.ensemble import StackingClassifier, StackingRegressor
+from sklearn.linear_model import LogisticRegression, Ridge
+from sklearn.base import clone
+from tqdm import tqdm
+import warnings
+from utils import load_config, clean_column_names
 
-def load_config(config_path="config.yaml"):
-    with open(config_path, "r") as f:
-        config = yaml.safe_load(f)
-    repo_root = Path(os.environ.get("REPO_ROOT", Path.cwd()))
-    if config.get("dataset_path") and not Path(config.get("dataset_path")).is_absolute():
-        config["dataset_path"] = str(repo_root / config["dataset_path"])
-    if config.get("test_path") and not Path(config.get("test_path")).is_absolute():
-        config["test_path"] = str(repo_root / config["test_path"])
-    return config
+warnings.filterwarnings('ignore')
 
-def _add_features(X_df):
-    """Generic dataset-agnostic feature engineering (locked)."""
-    X = X_df.copy()
-    for col in X.select_dtypes(include=['object', 'category', 'string']).columns:
-        X[f"{col}_len"] = X[col].astype(str).replace('nan', '').str.len()
-        X[f"{col}_missing"] = X[col].isnull().astype(int)
-    for col in X.select_dtypes(include=np.number).columns:
-        X[f"{col}_missing"] = X[col].isnull().astype(int)
-    return X
+
+def engineer_features(df_input, ref_df=None):
+    df = df_input.copy()
+    meta_src = ref_df if ref_df is not None else df
+
+    # 1. Missing indicators
+    for col in df.columns:
+        if meta_src[col].isnull().any():
+            df[f'{col}_missing'] = df[col].isnull().astype(int)
+
+    # 2. Auto-detect boolean-like object columns and convert to 0/1
+    bool_map = {
+        'true': 1, 'false': 0,
+        '1': 1, '0': 0,
+        'yes': 1, 'no': 0,
+        't': 1, 'f': 0,
+        'y': 1, 'n': 0
+    }
+    bool_cols = []
+    for col in meta_src.select_dtypes(include=['object', 'category']).columns:
+        non_null = meta_src[col].dropna().astype(str).str.strip().str.lower()
+        if len(non_null) == 0:
+            continue
+        uniq = non_null.unique()
+        if len(uniq) <= 2 and all(u in bool_map for u in uniq):
+            bool_cols.append(col)
+
+    for col in bool_cols:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip().str.lower().map(bool_map).astype(float)
+
+    # Recompute column types after bool conversion
+    num_cols = df.select_dtypes(include=np.number).columns.tolist()
+    cat_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+
+    # 3. Generic numerical features
+    if len(num_cols) > 0:
+        # Clip outliers generically based on train distribution
+        for col in num_cols:
+            if col in meta_src.columns and pd.api.types.is_numeric_dtype(meta_src[col]):
+                q_low = meta_src[col].quantile(0.01)
+                q_high = meta_src[col].quantile(0.99)
+                if pd.notna(q_low) and pd.notna(q_high):
+                    df[col] = df[col].clip(lower=q_low, upper=q_high)
+
+        df['__num_sum'] = df[num_cols].sum(axis=1, skipna=True)
+        df['__num_mean'] = df[num_cols].mean(axis=1, skipna=True)
+        df['__num_std'] = df[num_cols].std(axis=1, skipna=True)
+        df['__num_max'] = df[num_cols].max(axis=1, skipna=True)
+        df['__num_min'] = df[num_cols].min(axis=1, skipna=True)
+        df['__num_null_count'] = df[num_cols].isnull().sum(axis=1)
+        df['__num_zero_count'] = (df[num_cols].fillna(0) == 0).sum(axis=1)
+        df['__all_num_zero'] = (df['__num_zero_count'] == len(num_cols)).astype(int)
+
+        # Per-column zero indicator
+        for col in num_cols:
+            if col in meta_src.columns and pd.api.types.is_numeric_dtype(meta_src[col]):
+                zero_pct = (meta_src[col].fillna(0) == 0).mean()
+                if zero_pct > 0.05:
+                    df[f'{col}_is_zero'] = (df[col].fillna(0) == 0).astype(int)
+
+        # Log1p transform for highly skewed non-negative numeric columns
+        for col in num_cols:
+            if col in meta_src.columns and pd.api.types.is_numeric_dtype(meta_src[col]):
+                if meta_src[col].min() >= 0 and meta_src[col].max() > 0:
+                    skewness = meta_src[col].dropna().skew()
+                    if skewness > 1.5:
+                        df[f'{col}_log1p'] = np.log1p(df[col])
+
+        # Generic age heuristic
+        for col in num_cols:
+            if col.lower() == 'age' and pd.api.types.is_numeric_dtype(df[col]):
+                df[f'{col}_is_child'] = (df[col] < 13).astype(int)
+                df[f'{col}_is_teen'] = ((df[col] >= 13) & (df[col] < 20)).astype(int)
+                df[f'{col}_is_senior'] = (df[col] >= 60).astype(int)
+
+    # 4. Generic structured categorical splitting + numeric part parsing
+    for col in cat_cols:
+        df[col] = df[col].astype(str).replace('nan', 'missing')
+        df[f'{col}_len'] = df[col].str.len()
+        for sep, n_splits in [('/', 2), ('_', 1), (' ', 1)]:
+            if df[col].str.contains(sep, regex=False, na=False).mean() > 0.1:
+                try:
+                    parts = df[col].str.split(sep, n=n_splits, expand=True)
+                    n_part = min(parts.shape[1], 3)
+                    for i in range(n_part):
+                        new_col = f'{col}_part{i}'
+                        df[new_col] = parts[i].astype(str)
+                        parsed = pd.to_numeric(parts[i], errors='coerce')
+                        if parsed.notna().sum() > len(df) * 0.5:
+                            df[f'{new_col}_num'] = parsed
+                except Exception:
+                    pass
+
+    # 5. Frequency encoding for all object columns (including generated parts)
+    src = ref_df if ref_df is not None else df
+    obj_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+    for col in obj_cols:
+        try:
+            if col in src.columns:
+                freq_map = src[col].value_counts(dropna=False).to_dict()
+            else:
+                freq_map = df[col].value_counts(dropna=False).to_dict()
+            df[f'{col}_freq'] = df[col].map(freq_map).fillna(0).astype(int)
+        except Exception:
+            df[f'{col}_freq'] = 0
+
+    # Final safety: coerce any remaining object columns that are purely numeric
+    for col in df.select_dtypes(include=['object', 'category']).columns:
+        coerced = pd.to_numeric(df[col], errors='coerce')
+        if coerced.notna().mean() > 0.99:
+            df[col] = coerced
+
+    return df
+
 
 def train_and_evaluate(config_path="config.yaml", output_dir="."):
     config = load_config(config_path)
     dataset_path = config.get("dataset_path")
     target_col = config.get("target_col")
     test_path = config.get("test_path")
-    nrows = config.get("max_rows")
 
-    df = pd.read_csv(dataset_path, nrows=nrows)
+    read_csv_kwargs = {}
+    if "nrows" in config:
+        read_csv_kwargs["nrows"] = config["nrows"]
+
+    df = pd.read_csv(dataset_path, **read_csv_kwargs)
     df = df.dropna(subset=[target_col])
     y_raw = df[target_col]
-    X = df.drop(columns=[target_col])
-    X.columns = [re.sub(r'[^\w\s]', '', col).replace(' ', '_') for col in X.columns]
+    X_raw = df.drop(columns=[target_col])
+    X_raw = clean_column_names(X_raw)
 
+    # Determine task & encode target
     task = 'classification' if y_raw.nunique() < 20 else 'regression'
     if task == 'classification':
         le_y = LabelEncoder()
@@ -62,138 +160,143 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     else:
         y = y_raw.values
 
-    cat_cols = list(X.select_dtypes(include=['object', 'category', 'string']).columns)
+    # Feature Engineering
+    X = engineer_features(X_raw)
+    X = clean_column_names(X)
 
-    # Preprocessing pipeline (locked)
-    transformers = [
-        ('num', Pipeline([
-            ('imputer', SimpleImputer(strategy='median')),
-            ('scaler', StandardScaler())
-        ]), make_column_selector(dtype_include=np.number)),
-    ]
-    if len(cat_cols) > 0:
-        transformers.append(
-            ('cat', Pipeline([
-                ('imputer', SimpleImputer(strategy='most_frequent')),
-                ('ohe', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
-            ]), cat_cols)
-        )
-    preprocessor = ColumnTransformer(transformers=transformers, remainder='drop')
+    # Strictly separate numeric vs non-numeric to avoid transformer mismatches
+    numerical_features = []
+    categorical_features = []
+    for c in X.columns:
+        if pd.api.types.is_numeric_dtype(X[c]):
+            numerical_features.append(c)
+        else:
+            categorical_features.append(c)
 
-    # NEW representation pipeline: tree-based feature selection
-    representation_pipeline = Pipeline(steps=[
-        ('variance', VarianceThreshold(threshold=0.01)),
-        ('quantile', QuantileTransformer(output_distribution='normal', random_state=42)),
-        ('feature_selection', SelectFromModel(
-            ExtraTreesClassifier(n_estimators=100, random_state=42, n_jobs=-1),
-            threshold='median'
-        ))
+    # Preprocessor: median impute + scale numerics; ordinal encode categoricals
+    numeric_transformer = Pipeline(steps=[
+        ('imputer', SimpleImputer(strategy='median')),
+        ('scaler', StandardScaler())
+    ])
+    categorical_transformer = Pipeline(steps=[
+        ('imputer', SimpleImputer(strategy='constant', fill_value='missing')),
+        ('ordinal', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1))
     ])
 
-    # ---- Re‑regularized ensemble (unchanged) ----
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('num', numeric_transformer, numerical_features),
+            ('cat', categorical_transformer, categorical_features)
+        ],
+        remainder='drop'
+    )
+
+    # Initialize Stacking Ensemble with stronger regularization for small data
     if task == 'classification':
+        from lightgbm import LGBMClassifier
+        from xgboost import XGBClassifier
+        from catboost import CatBoostClassifier
+
         estimators = [
-            ('xgb', XGBClassifier(
-                n_estimators=500, max_depth=3, learning_rate=0.01,
-                subsample=0.6, colsample_bytree=0.5, min_child_weight=10,
-                gamma=0.5, reg_alpha=2.0, reg_lambda=5.0,
-                random_state=42, n_jobs=-1, eval_metric='logloss'
-            )),
             ('lgb', LGBMClassifier(
-                n_estimators=500, max_depth=3, learning_rate=0.01,
-                num_leaves=20, subsample=0.6, colsample_bytree=0.5,
-                reg_alpha=5.0, reg_lambda=10.0,
-                random_state=42, verbosity=-1, n_jobs=-1
-            )),
+                n_estimators=2000, learning_rate=0.01, num_leaves=7, max_depth=3,
+                subsample=0.7, colsample_bytree=0.7, reg_alpha=0.5, reg_lambda=0.5,
+                min_child_samples=40, random_state=42, n_jobs=-1, verbose=-1)),
+            ('xgb', XGBClassifier(
+                n_estimators=2000, learning_rate=0.01, max_depth=3,
+                subsample=0.7, colsample_bytree=0.7, reg_alpha=0.5, reg_lambda=0.5,
+                min_child_weight=15, gamma=0.1,
+                use_label_encoder=False, eval_metric='logloss', random_state=42, n_jobs=-1)),
             ('cat', CatBoostClassifier(
-                iterations=500, depth=3, learning_rate=0.01,
-                l2_leaf_reg=30.0, border_count=200,
-                random_seed=42, verbose=False, thread_count=-1,
-                loss_function='Logloss'
-            )),
-            ('ridge', CalibratedClassifierCV(
-                RidgeClassifier(alpha=20.0, random_state=42), method='sigmoid', cv=3
-            ))
+                iterations=2000, learning_rate=0.01, depth=4, l2_leaf_reg=10,
+                random_strength=2, bagging_temperature=0.5, border_count=32,
+                loss_function='Logloss', random_seed=42, verbose=False, thread_count=-1))
         ]
-        ensemble = StackingClassifier(
+        final_estimator = LogisticRegression(max_iter=2000, C=0.1, solver='lbfgs', random_state=42)
+        model = StackingClassifier(
             estimators=estimators,
-            final_estimator=LogisticRegression(
-                penalty='l2', C=0.5, max_iter=5000, random_state=42
-            ),
-            passthrough=False,
+            final_estimator=final_estimator,
+            cv=5,
             stack_method='predict_proba',
-            cv=5,
-            n_jobs=1
-        )
-    else:
-        estimators = [
-            ('xgb', XGBRegressor(
-                n_estimators=500, max_depth=3, learning_rate=0.01,
-                subsample=0.6, colsample_bytree=0.5, min_child_weight=10,
-                gamma=0.5, reg_alpha=2.0, reg_lambda=5.0,
-                random_state=42, n_jobs=-1
-            )),
-            ('lgb', LGBMRegressor(
-                n_estimators=500, max_depth=3, learning_rate=0.01,
-                num_leaves=20, subsample=0.6, colsample_bytree=0.5,
-                reg_alpha=5.0, reg_lambda=10.0,
-                random_state=42, verbosity=-1, n_jobs=-1
-            )),
-            ('cat', CatBoostRegressor(
-                iterations=500, depth=3, learning_rate=0.01,
-                l2_leaf_reg=30.0, border_count=200,
-                random_seed=42, verbose=False, thread_count=-1,
-                loss_function='RMSE'
-            )),
-            ('ridge', Ridge(alpha=50.0, random_state=42))
-        ]
-        ensemble = StackingRegressor(
-            estimators=estimators,
-            final_estimator=Ridge(alpha=50.0, random_state=42),
             passthrough=False,
-            cv=5,
-            n_jobs=1
+            n_jobs=-1
         )
+        cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+        scoring_fn = roc_auc_score
+    else:
+        from lightgbm import LGBMRegressor
+        from xgboost import XGBRegressor
+        from catboost import CatBoostRegressor
 
-    pipeline = Pipeline(steps=[
-        ('fe', FunctionTransformer(func=_add_features, validate=False)),
-        ('preprocessor', preprocessor),
-        ('representation', representation_pipeline),
-        ('ensemble', ensemble)
-    ])
+        estimators = [
+            ('lgb', LGBMRegressor(
+                n_estimators=2000, learning_rate=0.01, num_leaves=7, max_depth=3,
+                subsample=0.7, colsample_bytree=0.7, reg_alpha=0.5, reg_lambda=0.5,
+                min_child_samples=40, random_state=42, n_jobs=-1, verbose=-1)),
+            ('xgb', XGBRegressor(
+                n_estimators=2000, learning_rate=0.01, max_depth=3,
+                subsample=0.7, colsample_bytree=0.7, reg_alpha=0.5, reg_lambda=0.5,
+                min_child_weight=15, gamma=0.1,
+                random_state=42, n_jobs=-1)),
+            ('cat', CatBoostRegressor(
+                iterations=2000, learning_rate=0.01, depth=4, l2_leaf_reg=10,
+                random_strength=2, bagging_temperature=0.5, border_count=32,
+                random_seed=42, verbose=False, thread_count=-1))
+        ]
+        final_estimator = Ridge(alpha=1.0, random_state=42)
+        model = StackingRegressor(
+            estimators=estimators,
+            final_estimator=final_estimator,
+            cv=5,
+            passthrough=False,
+            n_jobs=-1
+        )
+        cv = KFold(n_splits=5, shuffle=True, random_state=42)
+        scoring_fn = mean_squared_error
 
-    metric = config.get("metric")
-    if metric is None:
-        metric = 'roc_auc' if task == 'classification' else 'neg_mean_squared_error'
+    pipeline = Pipeline(steps=[('preprocessor', preprocessor),
+                               ('model', model)])
 
-    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42) if task == 'classification' else KFold(n_splits=5, shuffle=True, random_state=42)
+    # Cross-Validation
+    print("Running 5-Fold CV...")
+    scores = []
+    for train_idx, val_idx in tqdm(list(cv.split(X, y)), desc="CV"):
+        X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+        y_train, y_val = y[train_idx], y[val_idx]
 
-    print(f"Running Cross-Validation (folds=5, metric={metric})...")
-    try:
-        scores = cross_val_score(pipeline, X, y, cv=cv, scoring=metric, n_jobs=1)
-    except Exception as e:
-        print(f"Warning: requested metric '{metric}' failed ({e}). Falling back to default.")
-        metric = 'roc_auc' if task == 'classification' else 'neg_mean_squared_error'
-        scores = cross_val_score(pipeline, X, y, cv=cv, scoring=metric, n_jobs=1)
+        fold_pipeline = clone(pipeline)
+        fold_pipeline.fit(X_train, y_train)
+
+        if task == 'classification':
+            y_pred = fold_pipeline.predict_proba(X_val)[:, 1]
+            score = scoring_fn(y_val, y_pred)
+        else:
+            y_pred = fold_pipeline.predict(X_val)
+            score = -scoring_fn(y_val, y_pred)
+        scores.append(score)
 
     final_score = float(np.mean(scores))
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
-    with open(output_path / "metrics.json", "w") as f:
+    print(f"Final CV Score: {final_score:.4f}")
+
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    with open(out_dir / "metrics.json", "w") as f:
         json.dump({"cv_score": final_score}, f)
 
-    # Generate submission
-    if test_path and Path(test_path).exists():
+    # Generate Submission
+    if test_path and os.path.exists(test_path):
         print("Generating submission...")
-        pipeline.fit(X, y)
-        test_df = pd.read_csv(test_path)
+        test_df = pd.read_csv(test_path, **read_csv_kwargs)
         test_id = test_df.iloc[:, 0].copy()
-        test_X = test_df.copy()
-        if target_col in test_X.columns:
-            test_X = test_X.drop(columns=[target_col])
-        test_X.columns = [re.sub(r'[^\w\s]', '', col).replace(' ', '_') for col in test_X.columns]
-        test_X = test_X.reindex(columns=X.columns, fill_value=np.nan)
+        test_X_raw = test_df.copy()
+        if target_col in test_X_raw.columns:
+            test_X_raw = test_X_raw.drop(columns=[target_col])
 
+        test_X_raw = clean_column_names(test_X_raw)
+        test_X = engineer_features(test_X_raw, ref_df=X_raw)
+        test_X = test_X.reindex(columns=X.columns, fill_value=0)
+
+        pipeline.fit(X, y)
         if task == 'classification':
             preds = pipeline.predict_proba(test_X)[:, 1]
         else:
@@ -203,10 +306,10 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
             test_df.columns[0]: test_id,
             target_col: preds
         })
-        submission.to_csv(output_path / "raw_submission.csv", index=False)
-        print("Saved raw_submission.csv")
+        submission.to_csv(out_dir / "raw_submission.csv", index=False)
 
     return final_score
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
