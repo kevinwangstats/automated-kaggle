@@ -282,6 +282,8 @@ RULES (your script MUST follow ALL of these):
             
             user_message = {"role": "user", "content": prompt}
             
+            active_skill_file = "skills/feature_engineering.md" if i <= feature_iterations else "skills/scikit_learn.md"
+            
             file_messages = None
             if use_llm_file_api:
                 # Resolve credentials for the file API
@@ -296,10 +298,10 @@ RULES (your script MUST follow ALL of these):
                     elif "openai" in model_name.lower() or "gpt" in model_name.lower():
                         api_key = os.environ.get("OPENAI_API_KEY")
                 
-                file_messages = llm_file_ops.get_llm_file_messages(["train_model.py", "EDA.md", "SKILL.md"], api_key=api_key, base_url=base_url)
+                file_messages = llm_file_ops.get_llm_file_messages(["train_model.py", "EDA.md", active_skill_file], api_key=api_key, base_url=base_url)
             
             if file_messages is None:
-                file_messages = get_file_messages(["train_model.py", "EDA.md", "SKILL.md"])
+                file_messages = get_file_messages(["train_model.py", "EDA.md", active_skill_file])
                 
             final_messages = file_messages + [user_message]
 
