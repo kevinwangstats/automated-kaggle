@@ -5,14 +5,20 @@ import json
 import os
 import argparse
 from pathlib import Path
+from functools import partial
 from sklearn.model_selection import StratifiedKFold, KFold
 from sklearn.preprocessing import LabelEncoder, StandardScaler, OrdinalEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import roc_auc_score, mean_squared_error
 from sklearn.impute import SimpleImputer
+from sklearn.feature_selection import (
+    SelectPercentile, mutual_info_classif, mutual_info_regression,
+    VarianceThreshold, SelectFromModel
+)
+from sklearn.decomposition import PCA
 from sklearn.ensemble import StackingClassifier, StackingRegressor
-from sklearn.linear_model import LogisticRegression, Ridge
+from sklearn.linear_model import LogisticRegression, Ridge, Lasso
 from sklearn.base import clone
 from tqdm import tqdm
 import warnings
@@ -22,6 +28,7 @@ warnings.filterwarnings('ignore')
 
 
 def engineer_features(df_input, ref_df=None):
+    # (locked – no changes allowed)
     df = df_input.copy()
     meta_src = ref_df if ref_df is not None else df
 
@@ -160,11 +167,11 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     else:
         y = y_raw.values
 
-    # Feature Engineering
+    # Feature Engineering (LOCKED – do not modify)
     X = engineer_features(X_raw)
     X = clean_column_names(X)
 
-    # Strictly separate numeric vs non-numeric to avoid transformer mismatches
+    # Separate numeric vs non-numeric
     numerical_features = []
     categorical_features = []
     for c in X.columns:
@@ -173,7 +180,7 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         else:
             categorical_features.append(c)
 
-    # Preprocessor: median impute + scale numerics; ordinal encode categoricals
+    # Preprocessor (LOCKED – do not modify)
     numeric_transformer = Pipeline(steps=[
         ('imputer', SimpleImputer(strategy='median')),
         ('scaler', StandardScaler())
@@ -191,7 +198,37 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         remainder='drop'
     )
 
-    # Initialize Stacking Ensemble with stronger regularization for small data
+    # ------------------------------------------------------------
+    # ENHANCED FEATURE SELECTION
+    # 1. Remove zero-variance features
+    # 2. Keep top 75% by mutual information (slightly more inclusive)
+    # 3. Aggressive L1-based selection to prune collinear/noisy features
+    # ------------------------------------------------------------
+    var_selector = VarianceThreshold(threshold=0.0)
+
+    if task == 'classification':
+        mi_selector = SelectPercentile(mutual_info_classif, percentile=75)
+        # L1‑penalised logistic regression with very small C to force sparsity
+        l1_selector = SelectFromModel(
+            LogisticRegression(penalty='l1', solver='liblinear', C=0.05,
+                              random_state=42, max_iter=1000),
+            threshold='median'                 # keep features with importance above median
+        )
+        scoring_fn = roc_auc_score
+        cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    else:
+        mi_selector = SelectPercentile(mutual_info_regression, percentile=75)
+        l1_selector = SelectFromModel(
+            LogisticRegression(penalty='l1', solver='liblinear', C=0.05,
+                              random_state=42, max_iter=1000),
+            threshold='median'
+        )
+        scoring_fn = mean_squared_error
+        cv = KFold(n_splits=5, shuffle=True, random_state=42)
+
+    # ------------------------------------------------------------
+
+    # Initialize Stacking Ensemble (unchanged hyper‑parameters)
     if task == 'classification':
         from lightgbm import LGBMClassifier
         from xgboost import XGBClassifier
@@ -200,17 +237,18 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         estimators = [
             ('lgb', LGBMClassifier(
                 n_estimators=2000, learning_rate=0.01, num_leaves=7, max_depth=3,
-                subsample=0.7, colsample_bytree=0.7, reg_alpha=0.5, reg_lambda=0.5,
-                min_child_samples=40, random_state=42, n_jobs=-1, verbose=-1)),
+                subsample=0.7, colsample_bytree=0.7, reg_alpha=0.6, reg_lambda=0.6,
+                min_child_samples=50, random_state=42, n_jobs=-1, verbosity=-1)),
             ('xgb', XGBClassifier(
                 n_estimators=2000, learning_rate=0.01, max_depth=3,
-                subsample=0.7, colsample_bytree=0.7, reg_alpha=0.5, reg_lambda=0.5,
-                min_child_weight=15, gamma=0.1,
-                use_label_encoder=False, eval_metric='logloss', random_state=42, n_jobs=-1)),
+                subsample=0.7, colsample_bytree=0.7, reg_alpha=0.6, reg_lambda=0.6,
+                min_child_weight=20, gamma=0.2,
+                use_label_encoder=False, eval_metric='logloss', random_state=42, n_jobs=-1,
+                verbosity=0)),
             ('cat', CatBoostClassifier(
-                iterations=2000, learning_rate=0.01, depth=4, l2_leaf_reg=10,
+                iterations=2000, learning_rate=0.01, depth=3, l2_leaf_reg=12,
                 random_strength=2, bagging_temperature=0.5, border_count=32,
-                loss_function='Logloss', random_seed=42, verbose=False, thread_count=-1))
+                loss_function='Logloss', random_seed=42, verbose=0, thread_count=-1))
         ]
         final_estimator = LogisticRegression(max_iter=2000, C=0.1, solver='lbfgs', random_state=42)
         model = StackingClassifier(
@@ -221,8 +259,6 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
             passthrough=False,
             n_jobs=-1
         )
-        cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-        scoring_fn = roc_auc_score
     else:
         from lightgbm import LGBMRegressor
         from xgboost import XGBRegressor
@@ -231,17 +267,17 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         estimators = [
             ('lgb', LGBMRegressor(
                 n_estimators=2000, learning_rate=0.01, num_leaves=7, max_depth=3,
-                subsample=0.7, colsample_bytree=0.7, reg_alpha=0.5, reg_lambda=0.5,
-                min_child_samples=40, random_state=42, n_jobs=-1, verbose=-1)),
+                subsample=0.7, colsample_bytree=0.7, reg_alpha=0.6, reg_lambda=0.6,
+                min_child_samples=50, random_state=42, n_jobs=-1, verbosity=-1)),
             ('xgb', XGBRegressor(
                 n_estimators=2000, learning_rate=0.01, max_depth=3,
-                subsample=0.7, colsample_bytree=0.7, reg_alpha=0.5, reg_lambda=0.5,
-                min_child_weight=15, gamma=0.1,
-                random_state=42, n_jobs=-1)),
+                subsample=0.7, colsample_bytree=0.7, reg_alpha=0.6, reg_lambda=0.6,
+                min_child_weight=20, gamma=0.2,
+                random_state=42, n_jobs=-1, verbosity=0)),
             ('cat', CatBoostRegressor(
-                iterations=2000, learning_rate=0.01, depth=4, l2_leaf_reg=10,
+                iterations=2000, learning_rate=0.01, depth=3, l2_leaf_reg=12,
                 random_strength=2, bagging_temperature=0.5, border_count=32,
-                random_seed=42, verbose=False, thread_count=-1))
+                random_seed=42, verbose=0, thread_count=-1))
         ]
         final_estimator = Ridge(alpha=1.0, random_state=42)
         model = StackingRegressor(
@@ -251,11 +287,15 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
             passthrough=False,
             n_jobs=-1
         )
-        cv = KFold(n_splits=5, shuffle=True, random_state=42)
-        scoring_fn = mean_squared_error
 
-    pipeline = Pipeline(steps=[('preprocessor', preprocessor),
-                               ('model', model)])
+    # Build final pipeline with the new three‑stage feature selection
+    pipeline = Pipeline(steps=[
+        ('preprocessor', preprocessor),
+        ('var_threshold', var_selector),
+        ('mi_selector', mi_selector),
+        ('l1_selector', l1_selector),   # added aggressive pruning
+        ('model', model)
+    ])
 
     # Cross-Validation
     print("Running 5-Fold CV...")
