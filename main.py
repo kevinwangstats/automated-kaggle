@@ -43,6 +43,8 @@ def main():
         test_path = config.get('test_path')
         metric = config.get('metric')
         pred_type = config.get('pred_type', 'prob')
+        exploration_margin = config.get('exploration_margin', 0.05)
+        exploration_patience = config.get('exploration_patience', 3)
         feature_iterations = config.get('feature_iterations', 5)
         tuning_iterations = config.get('tuning_iterations', 2)
         timeout = config.get('timeout', 600)
@@ -363,6 +365,8 @@ def main():
             dataset_branch=dataset_branch,
             feature_iterations=feature_iterations,
             tuning_iterations=tuning_iterations,
+            exploration_margin=exploration_margin,
+            exploration_patience=exploration_patience,
             skip_confirmation=args.yes,
             timeout=timeout,
             model=model,

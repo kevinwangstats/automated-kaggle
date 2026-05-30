@@ -55,6 +55,13 @@ tuning_iterations: 5
 
 # --- PIPELINE TUNING & METRICS ---
 
+# exploration_margin: The allowed score degradation (in absolute points) before it is considered a severe failure.
+# For example, 0.05 allows a 5% point drop before punishing the agent.
+exploration_margin: 0.05
+
+# exploration_patience: Number of consecutive iterations outside the exploration_margin before triggering a rollback.
+exploration_patience: 3
+
 # metric: The scikit-learn scoring metric name for Cross Validation.
 # If null (~), it defaults to 'roc_auc' for classification and 'neg_mean_squared_error' for regression.
 # Examples: "f1", "accuracy", "roc_auc", "neg_log_loss", "r2", "neg_mean_squared_error", ~

@@ -166,6 +166,8 @@ def run_agent_loop(
     dataset_branch: str,
     feature_iterations: int = 5,
     tuning_iterations: int = 2,
+    exploration_margin: float = 0.05,
+    exploration_patience: int = 3,
     skip_confirmation: bool = False,
     timeout: int = 600,
     model: str = None,
@@ -219,6 +221,7 @@ def run_agent_loop(
     
     failures_in_session = 0
     consecutive_crashes = 0
+    consecutive_outside_margin = 0
     rollback_warning = ""
     
     for i in range(start_iteration, end_iteration):
@@ -398,6 +401,7 @@ RULES (your script MUST follow ALL of these):
                 log_stage("Crash Loop Detected: Reverting workspace to last successful commit.")
                 git_mgr.revert_changes()
                 consecutive_crashes = 0
+                consecutive_outside_margin = 0
                 rollback_warning = "\n[SYSTEM NOTIFICATION]: Your previous script crashed multiple times and was ROLLED BACK to a stable state.\n"
             else:
                 rollback_warning = ""
@@ -450,6 +454,7 @@ RULES (your script MUST follow ALL of these):
                 # Commit directly to the dataset branch
                 commit_id = git_mgr.commit_all(f"[Iter {len(history)+1} | CV Score: {new_score:.4f}] Successful agent iteration")
                 consecutive_crashes = 0
+                consecutive_outside_margin = 0
                 rollback_warning = ""
                 
                 # Update history
@@ -462,10 +467,24 @@ RULES (your script MUST follow ALL of these):
                     "mode": state_name
                 })
             else:
-                log_stage(f"Score degraded ({new_score:.4f}). Instant Rollback to last best commit.")
-                git_mgr.revert_changes()
-                consecutive_crashes = 0
-                rollback_warning = f"\n[SYSTEM NOTIFICATION]: Your previous strategy ran successfully but DEGRADED the CV score to {new_score:.4f}. The script was AUTOMATICALLY ROLLED BACK to the best known state. DO NOT repeat the exact same strategy. Pivot to a new approach.\n"
+                diff = current_best_score - new_score
+
+                if diff <= exploration_margin:
+                    log_stage(f"Score degraded ({new_score:.4f}) but is within margin ({exploration_margin}). Allowing exploration.")
+                    consecutive_outside_margin = 0
+                    consecutive_crashes = 0
+                    rollback_warning = "" 
+                else:
+                    consecutive_outside_margin += 1
+                    if consecutive_outside_margin >= exploration_patience:
+                        log_stage(f"Score degraded outside margin ({new_score:.4f}) for {exploration_patience} consecutive iterations. Rolling back to last best commit.")
+                        git_mgr.revert_changes()
+                        consecutive_outside_margin = 0
+                        consecutive_crashes = 0
+                        rollback_warning = f"\n[SYSTEM NOTIFICATION]: Your recent strategies significantly DEGRADED the CV score to {new_score:.4f} (outside margin). The script was AUTOMATICALLY ROLLED BACK to the best known state. DO NOT repeat the exact same strategy. Pivot to a new approach.\n"
+                    else:
+                        log_stage(f"Score degraded outside margin ({new_score:.4f}). Warning {consecutive_outside_margin}/{exploration_patience} before rollback.")
+                        rollback_warning = ""
                 
                 history.append({
                     "iteration": len(history)+1,
@@ -509,6 +528,7 @@ RULES (your script MUST follow ALL of these):
                 log_stage("Crash Loop Detected: Reverting workspace to last successful commit.")
                 git_mgr.revert_changes()
                 consecutive_crashes = 0
+                consecutive_outside_margin = 0
                 rollback_warning = "\n[SYSTEM NOTIFICATION]: Your previous script crashed multiple times and was ROLLED BACK to a stable state.\n"
             else:
                 rollback_warning = ""
