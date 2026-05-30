@@ -18,7 +18,8 @@ The system consists of the following core components:
 
 To maximize API efficiency, prevent infinite loops, and reduce token bloat, the pipeline implements the following safeguards:
 
-- **Semantic Memory**: The orchestrator no longer passes raw code history (prompts and responses) into the LLM context. Instead, it maintains a distilled "Memory String" summarizing only the outcomes and the agent's extracted reasoning from the last 3 runs. This saves significant tokens and forces the agent to maintain focus on high-level strategies rather than drowning in thousands of lines of previous code.
+- **Categorized Semantic Memory**: The orchestrator parses `history.json` to extract just the `agent_reasoning` and groups it by outcome (SUCCESSFUL STRATEGIES, FAILED STRATEGIES, RECENT CRASHES) to create a concise, outcome-based memory string. This saves significant tokens and forces the agent to maintain focus on high-level strategies.
+- **Asymmetric Rollbacks**: If a strategy degrades the CV score or crashes multiple times, the orchestrator instantly rolls back the workspace to the last known best commit. It then explicitly warns the agent (injecting a rollback notification and temporarily increasing temperature) to force exploration and prevent falling into a "rabbit hole."
 - **API Defense (Transient vs. Fatal)**: API calls are wrapped in robust litellm exception handlers. **Fatal errors** (e.g., 400 Bad Request, 401 Authentication Error) immediately halt the pipeline to prevent infinite loops and save costs. **Transient Timeouts** trigger an automatic, temporary fallback to `gemini-2.5-flash` to ensure the pipeline continues iterating smoothly.
 
 ### 3-State Cognitive Architecture

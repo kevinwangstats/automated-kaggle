@@ -130,32 +130,31 @@ def _init_weave(wandb_enabled: bool, wandb_project: str, wandb_entity: str):
         weave.init(weave_project)
 
 def _build_agent_memory(history: list) -> str:
-    memory_string = "### Agent Memory (Past Experiments)\n"
+    worked = []
+    failed = []
+    crashed = []
     
-    # Condense older history (runs before the last 3)
-    older_history = history[:-3] if len(history) > 3 else []
-    if older_history:
-        memory_string += "OLDER STRATEGIES TRIED:\n"
-        for run in older_history:
-            if run.get('agent_reasoning'):
-                status = "IMPROVED" if run.get('improved') else "DEGRADED/FAILED"
-                memory_string += f"- Iter {run['iteration']} ({status}): {run['agent_reasoning']}\n"
-        memory_string += "\nRECENT DETAILED HISTORY:\n"
-
-    # Keep detailed history for the last 3 runs
-    recent_history = history[-3:] if len(history) >= 3 else history
-
-    for run in recent_history:
-        status = "IMPROVED" if run.get('improved') else ("FAILED WITH ERROR" if run.get('error') else "DEGRADED")
-        mode_str = f" [Mode: {run.get('mode')}]" if run.get('mode') else ""
-        memory_string += f"- Iteration {run['iteration']}{mode_str} ({status}): "
-        
-        if run.get('error'):
-            # Truncate error to last 1000 chars
-            memory_string += f"{str(run['error'])[-1000:]}\n"
-        else:
-            memory_string += f"Score {run.get('score')}. Reasoning: {run.get('agent_reasoning', 'No reasoning provided')}\n"
+    for run in history:
+        reasoning = str(run.get('agent_reasoning', '')).replace('\n', ' ').strip()
+        if not reasoning or reasoning == "No reasoning provided by LLM." or reasoning == "Execution failed before logic extraction":
+            continue
             
+        if run.get('improved'):
+            worked.append(f"- Iter {run['iteration']} (Score: {run['score']}): {reasoning}")
+        elif run.get('score') is not None and not run.get('improved'):
+            failed.append(f"- Iter {run['iteration']} (Score: {run['score']}): {reasoning}")
+        elif run.get('error'):
+            crashed.append(f"- Iter {run['iteration']} (CRASH): {reasoning}")
+
+    memory_string = "### Agent Memory (Techniques Tried)\n"
+    if worked:
+        memory_string += "SUCCESSFUL STRATEGIES:\n" + "\n".join(worked) + "\n\n"
+    if failed:
+        # Keep only the last 7 to avoid context bloat
+        memory_string += "FAILED STRATEGIES (DO NOT REPEAT):\n" + "\n".join(failed[-7:]) + "\n\n"
+    if crashed:
+        memory_string += "RECENT CRASHES:\n" + "\n".join(crashed[-3:]) + "\n\n"
+        
     return memory_string
 
 def run_agent_loop(
@@ -219,7 +218,8 @@ def run_agent_loop(
     end_iteration = start_iteration + total_iterations
     
     failures_in_session = 0
-    consecutive_degradations = 0
+    consecutive_crashes = 0
+    rollback_warning = ""
     
     for i in range(start_iteration, end_iteration):
         # Determine Cognitive State
@@ -300,7 +300,7 @@ RULES (your script MUST follow ALL of these):
             except Exception:
                 pass
 
-        prompt = f"{base_prompt}\n=== CURRENT SCRIPT ===\n```python\n{current_script}\n```\n\n{memory_string}\n{fi_string}\n{mission_text}\nFirst, provide a brief 1-2 sentence explanation of your strategy or fix. Then, output the full modified Python code wrapped in ```python ... ``` blocks."
+        prompt = f"{base_prompt}\n=== CURRENT SCRIPT ===\n```python\n{current_script}\n```\n\n{memory_string}\n{fi_string}\n{rollback_warning}{mission_text}\nFirst, provide a brief 1-2 sentence explanation of your strategy or fix. Then, output the full modified Python code wrapped in ```python ... ``` blocks."
         
         if not skip_confirmation:
             log_info(f"Preparing to call LLM for iteration {i}.")
@@ -340,10 +340,12 @@ RULES (your script MUST follow ALL of these):
                 
             final_messages = file_messages + [user_message]
 
+            current_temp = min(temperature + 0.3, 1.0) if rollback_warning else temperature
+
             completion_kwargs = {
                 "model": model_name,
                 "messages": final_messages,
-                "temperature": temperature,
+                "temperature": current_temp,
                 "request_timeout": 600  # Long timeout to accommodate streaming code generation
             }
             # Ollama requires an api_base pointing to the local server
@@ -391,11 +393,14 @@ RULES (your script MUST follow ALL of these):
         except Exception as e:
             log_error(f"Failed to extract or write code for iteration {i}", e)
             failures_in_session += 1
-            consecutive_degradations += 1
-            if consecutive_degradations >= 2:
-                log_stage("Rabbit Hole Detected: Reverting workspace to last successful commit.")
+            consecutive_crashes += 1
+            if consecutive_crashes >= 2:
+                log_stage("Crash Loop Detected: Reverting workspace to last successful commit.")
                 git_mgr.revert_changes()
-                consecutive_degradations = 0
+                consecutive_crashes = 0
+                rollback_warning = "\n[SYSTEM NOTIFICATION]: Your previous script crashed multiple times and was ROLLED BACK to a stable state.\n"
+            else:
+                rollback_warning = ""
             history.append({
                 "iteration": len(history)+1,
                 "commit": None,
@@ -423,16 +428,6 @@ RULES (your script MUST follow ALL of these):
             
             improved = (new_score > current_best_score) if higher_is_better else (new_score < current_best_score)
             
-            if improved:
-                consecutive_degradations = 0
-            else:
-                consecutive_degradations += 1
-
-            if consecutive_degradations >= 2:
-                log_stage("Rabbit Hole Detected: Reverting workspace to last successful commit.")
-                git_mgr.revert_changes()
-                consecutive_degradations = 0
-            
             if wandb_enabled:
                 system_prompt = "\n".join([m.get("content", "") for m in file_messages if m.get("role") == "system"])
                 user_prompt = prompt
@@ -454,11 +449,9 @@ RULES (your script MUST follow ALL of these):
                 
                 # Commit directly to the dataset branch
                 commit_id = git_mgr.commit_all(f"[Iter {len(history)+1} | CV Score: {new_score:.4f}] Successful agent iteration")
+                consecutive_crashes = 0
+                rollback_warning = ""
                 
-                # Append Changelog
-                with open("CHANGELOG.md", "a") as f:
-                    f.write(f"\n- **Iter {len(history)+1}**: Score {new_score:.4f} (Commit: {commit_id})\n")
-                    
                 # Update history
                 history.append({
                     "iteration": len(history)+1,
@@ -469,7 +462,11 @@ RULES (your script MUST follow ALL of these):
                     "mode": state_name
                 })
             else:
-                log_stage(f"Score degraded or unchanged. Leaving changes uncommitted in workspace for next iteration to retry.")
+                log_stage(f"Score degraded ({new_score:.4f}). Instant Rollback to last best commit.")
+                git_mgr.revert_changes()
+                consecutive_crashes = 0
+                rollback_warning = f"\n[SYSTEM NOTIFICATION]: Your previous strategy ran successfully but DEGRADED the CV score to {new_score:.4f}. The script was AUTOMATICALLY ROLLED BACK to the best known state. DO NOT repeat the exact same strategy. Pivot to a new approach.\n"
+                
                 history.append({
                     "iteration": len(history)+1,
                     "commit": None,
@@ -506,11 +503,15 @@ RULES (your script MUST follow ALL of these):
         except Exception as e:
             log_error(f"Execution failed for iteration {i}", e)
             failures_in_session += 1
-            consecutive_degradations += 1
-            if consecutive_degradations >= 2:
-                log_stage("Rabbit Hole Detected: Reverting workspace to last successful commit.")
+            consecutive_crashes += 1
+
+            if consecutive_crashes >= 2:
+                log_stage("Crash Loop Detected: Reverting workspace to last successful commit.")
                 git_mgr.revert_changes()
-                consecutive_degradations = 0
+                consecutive_crashes = 0
+                rollback_warning = "\n[SYSTEM NOTIFICATION]: Your previous script crashed multiple times and was ROLLED BACK to a stable state.\n"
+            else:
+                rollback_warning = ""
             history.append({
                 "iteration": len(history)+1,
                 "commit": None,

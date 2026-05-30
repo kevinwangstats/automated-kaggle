@@ -46,7 +46,6 @@ Before proposing code edits, you MUST read and strictly adhere to the instructio
 - The framework uses a Configuration-Driven Model Registry (models_registry.yaml). The baseline engine dynamically builds ensembles based on this file. When editing train_model.py, the agent should utilize the models defined in this registry.
 
 ## 5. Formatting, Tracking & Logging Strict Rules
-- **`CHANGELOG.md`**: Must only contain successful iterations. It must follow a markdown bullet format: `- **Iter <N>**: Score <score> (Commit: <id>)`. Do not bloat this file with verbose logging.
 - **`history.json`**: Tracks all iterations (both successful and failed). It strictly follows an array of objects with schema: `{"iteration": int, "commit": str, "score": float, "improved": bool, "prompt": str, "response": str, "error": str}`. If editing logic related to this, you must preserve these keys.
 - **DO NOT use standard `print()`** statements for debugging standard execution paths. Use the custom `logger.py` module (`log_info`, `log_stage`, `log_error`, `log_metric`).
 - **File Logging**: `main.py` accepts an optional `--log-file` argument to mirror console outputs to a file.
