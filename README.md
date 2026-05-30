@@ -102,24 +102,12 @@ python main.py --config custom_config.yaml -y --resume --log-file automl.log
 
 - `--config`: Path to a custom YAML configuration file (default: `config.yaml`).
 - `--log-file`: Optional path to mirror console output to a `.log` file (e.g., `automl.log`).
-- `-y`: Skip the manual user confirmation prompt before each LLM API call. When previous state is detected, this flag skips the interactive resume/restart prompt and falls back to the `run_mode` defined in `config.yaml` (default: `resume`).
-- `-r`, `--resume`: Force-resume an existing optimization session. This skips the EDA and Baseline generation phases, loading the previous best score and W&B run ID to continue iterating directly from your current best `train_model.py` script.
+- `-y`: Skip the manual user confirmation prompt before each LLM API call.
+- `-r`, `--resume`: This flag is currently deprecated. Resuming is now handled automatically.
 
-### Resume or Restart Safety Check
+### Automatic Resumes
 
-If the pipeline detects a previous `train_model.py` and `history.json` in the workspace, it will prompt you interactively:
-
-```
-[Warning] Previous iterations detected for this dataset. Do you want to resume from the existing train_model.py and history? (y/n):
-```
-
-This prevents accidentally overwriting manually optimized scripts. You can control this behavior via the `run_mode` key in `config.yaml`:
-
-| `run_mode` | Behavior |
-|---|---|
-| `"prompt"` | Ask interactively (default) |
-| `"resume"` | Always resume from existing state |
-| `"scratch"` | Always start fresh |
+If the pipeline detects a previous `train_model.py` and a populated `history.json` in the workspace, it will automatically resume the session. There are no interactive prompts to resume. To start fresh, simply delete the dataset's workspace folder or use a new branch.
 
 **Important Note on Resuming:**
 When resuming, the pipeline **always executes your existing `train_model.py` as-is first** to establish an empirical CV score. If you manually edit the script between runs, it evaluates those changes and logs a `HUMAN_INTERVENTION` entry in `history.json`. This ensures the LLM is always trying to beat a true, verified baseline.

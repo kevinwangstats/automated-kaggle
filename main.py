@@ -66,7 +66,6 @@ def main():
         dataset_branch = dataset_branch_from_dataset_path(dataset_path)
         
         workspace_root = config.get("workspace_root", ".workspaces")
-        run_mode = config.get("run_mode", "prompt")
         
         workspace_mgr = WorkspaceManager(dataset_branch, root_dir=workspace_root)
         had_commits = bool(git_mgr.repo.heads)
@@ -74,49 +73,25 @@ def main():
         if had_commits:
             if git_mgr.has_uncommitted_changes():
                 log_info("You have uncommitted changes on the active branch.")
-                log_info("You will not be running the latest software unless you commit.")
-                if args.yes:
-                    log_info("Automatically committing all core changes...")
-                    git_mgr.commit_all("Auto-commit core updates in non-interactive mode")
-                else:
-                    if git_mgr.is_on_main() and dataset_branch != "main":
-                        ans = input("Are you happy to git add all file changes, commit, and push before proceeding to work on the dataset branch? (y/n): ")
-                        if ans.lower() == 'y':
-                            msg = input("Enter commit message: ")
-                            if not msg: msg = "Update core files"
-                            git_mgr.commit_all(msg)
-                            try:
-                                git_mgr.repo.remotes.origin.push()
-                                log_info("Pushed to origin.")
-                            except Exception as e:
-                                log_info(f"Push to origin skipped/failed: {e}")
-                        else:
-                            log_info("Aborting. Please stash or commit your changes manually before proceeding to avoid conflicts.")
-                            sys.exit(1)
+                log_info("Automatically committing all core changes...")
+                git_mgr.commit_all("Auto-commit core updates")
             
             if dataset_branch != "main" and git_mgr.branch_exists(dataset_branch) and not git_mgr.is_branch_based_on_latest_main(dataset_branch):
                 log_info(f"The dataset branch '{dataset_branch}' already exists, but it is not based off the latest commit on 'main'.")
-                log_info("You will not be running the latest software for this dataset.")
-                if args.yes:
-                    log_info("Non-interactive mode active: attempting to merge 'main' branch automatically.")
-                    # Switch to the dataset branch first so we can merge main into it
-                    dataset_branch = git_mgr.ensure_dataset_branch(dataset_branch)
+                log_info("Attempting to merge 'main' branch automatically.")
+                # Switch to the dataset branch first so we can merge main into it
+                dataset_branch = git_mgr.ensure_dataset_branch(dataset_branch)
+                try:
+                    git_mgr.merge_main()
+                except Exception:
+                    log_info(f"Failed to merge main into '{dataset_branch}'. Force-deleting the outdated branch to start fresh from latest main.")
                     try:
-                        git_mgr.merge_main()
+                        git_mgr.repo.git.merge(abort=True)
                     except Exception:
-                        log_info(f"Failed to merge main into '{dataset_branch}'. Force-deleting the outdated branch to start fresh from latest main.")
-                        try:
-                            git_mgr.repo.git.merge(abort=True)
-                        except Exception:
-                            pass
-                        git_mgr.checkout_branch("main")
-                        git_mgr.delete_branch(dataset_branch)
-                        dataset_branch = git_mgr.ensure_dataset_branch(dataset_branch)
-                else:
-                    ans = input(f"Would you like to delete the '{dataset_branch}' branch by force to start fresh from the latest main? (y/n): ")
-                    if ans.lower() == 'y':
-                        git_mgr.delete_branch(dataset_branch)
-                        log_info(f"Deleted outdated dataset branch '{dataset_branch}'.")
+                        pass
+                    git_mgr.checkout_branch("main")
+                    git_mgr.delete_branch(dataset_branch)
+                    dataset_branch = git_mgr.ensure_dataset_branch(dataset_branch)
 
         # Checkout dataset branch to reveal tracked files
         if had_commits:
@@ -124,26 +99,17 @@ def main():
             workspace_mgr = WorkspaceManager(dataset_branch, root_dir=workspace_root)
 
         # State detection: check the ROOT directory for tracked artifacts
-        has_previous_state = Path("history.json").exists() and Path("train_model.py").exists()
-                
-        should_resume = args.resume
-        if has_previous_state and not args.resume:
-            if args.yes:
-                resolved_mode = "resume" if run_mode == "prompt" else run_mode
-                should_resume = (resolved_mode == "resume")
-                log_info(f"Skipping interactive prompt due to -y flag. Using fallback mode: {resolved_mode}")
-            else:
-                if run_mode == "resume":
-                    should_resume = True
-                elif run_mode == "scratch":
-                    should_resume = False
-                else:
-                    ans = input("[Warning] Previous iterations detected for this dataset. Do you want to resume from the existing train_model.py and history? (y/n): ")
-                    should_resume = (ans.lower() == 'y')
-                
-        if args.resume and not has_previous_state:
-            log_info("--resume passed but no previous root state found. Falling back to start from scratch.")
-            should_resume = False
+        history_path = Path("history.json")
+        history = []
+        if history_path.exists():
+            try:
+                with open(history_path, "r") as f:
+                    history = json.load(f)
+            except Exception:
+                pass
+
+        has_previous_state = len(history) > 0 and Path("train_model.py").exists()
+        should_resume = has_previous_state
 
         if had_commits and not should_resume:
             git_mgr.revert_changes()
@@ -194,16 +160,7 @@ def main():
             y = df[target_col].dropna()
             task = 'classification' if y.nunique() < 20 else 'regression'
 
-            history_path = Path("history.json")
             script_path = Path("train_model.py")
-            
-            history = []
-            if history_path.exists():
-                try:
-                    with open(history_path, "r") as f:
-                        history = json.load(f)
-                except Exception:
-                    pass
 
             current_code = ""
             if script_path.exists():
