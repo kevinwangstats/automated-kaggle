@@ -131,6 +131,18 @@ def _init_weave(wandb_enabled: bool, wandb_project: str, wandb_entity: str):
 
 def _build_agent_memory(history: list) -> str:
     memory_string = "### Agent Memory (Past Experiments)\n"
+    
+    # Condense older history (runs before the last 3)
+    older_history = history[:-3] if len(history) > 3 else []
+    if older_history:
+        memory_string += "OLDER STRATEGIES TRIED:\n"
+        for run in older_history:
+            if run.get('agent_reasoning'):
+                status = "IMPROVED" if run.get('improved') else "DEGRADED/FAILED"
+                memory_string += f"- Iter {run['iteration']} ({status}): {run['agent_reasoning']}\n"
+        memory_string += "\nRECENT DETAILED HISTORY:\n"
+
+    # Keep detailed history for the last 3 runs
     recent_history = history[-3:] if len(history) >= 3 else history
 
     for run in recent_history:
@@ -207,6 +219,7 @@ def run_agent_loop(
     end_iteration = start_iteration + total_iterations
     
     failures_in_session = 0
+    consecutive_degradations = 0
     
     for i in range(start_iteration, end_iteration):
         # Determine Cognitive State
@@ -367,6 +380,11 @@ RULES (your script MUST follow ALL of these):
         except Exception as e:
             log_error(f"Failed to extract or write code for iteration {i}", e)
             failures_in_session += 1
+            consecutive_degradations += 1
+            if consecutive_degradations >= 2:
+                log_stage("Rabbit Hole Detected: Reverting workspace to last successful commit.")
+                git_mgr.revert_changes()
+                consecutive_degradations = 0
             history.append({
                 "iteration": len(history)+1,
                 "commit": None,
@@ -393,6 +411,16 @@ RULES (your script MUST follow ALL of these):
             higher_is_better = True
             
             improved = (new_score > current_best_score) if higher_is_better else (new_score < current_best_score)
+            
+            if improved:
+                consecutive_degradations = 0
+            else:
+                consecutive_degradations += 1
+
+            if consecutive_degradations >= 2:
+                log_stage("Rabbit Hole Detected: Reverting workspace to last successful commit.")
+                git_mgr.revert_changes()
+                consecutive_degradations = 0
             
             if wandb_enabled:
                 system_prompt = "\n".join([m.get("content", "") for m in file_messages if m.get("role") == "system"])
@@ -467,6 +495,11 @@ RULES (your script MUST follow ALL of these):
         except Exception as e:
             log_error(f"Execution failed for iteration {i}", e)
             failures_in_session += 1
+            consecutive_degradations += 1
+            if consecutive_degradations >= 2:
+                log_stage("Rabbit Hole Detected: Reverting workspace to last successful commit.")
+                git_mgr.revert_changes()
+                consecutive_degradations = 0
             history.append({
                 "iteration": len(history)+1,
                 "commit": None,

@@ -133,6 +133,24 @@ As detailed in `llms.txt` and `train_model.py`:
 * **ID Column Preservation**: When generating submissions, you MUST capture the original ID column (typically the first column of the test set) before dropping it from the feature set.
 * **Pipeline Integrity**: The modeling pipeline heavily relies on scikit-learn `Pipeline` and `ColumnTransformer` architectures to prevent data leakage and handle unseen categories safely (`handle_unknown='ignore'`).
 
+### 7. Safe Ensembling (Preventing Data Leakage)
+When building a `StackingClassifier`, `StackingRegressor`, `VotingClassifier`, or `VotingRegressor`, DO NOT manually call `.fit()` on the base estimators. The scikit-learn meta-estimator handles cross-validated fitting natively.
+* **INCORRECT:** `xgb.fit(X_train, y_train)` then passing `xgb` into the ensemble.
+* **CORRECT:**
+```python
+from sklearn.ensemble import StackingClassifier
+from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
+from sklearn.linear_model import LogisticRegression
+
+estimators = [
+    ('xgb', XGBClassifier(random_state=42, n_jobs=-1)),
+    ('lgb', LGBMClassifier(random_state=42, verbosity=-1, n_jobs=-1))
+]
+# The StackingClassifier natively handles fitting the base models using internal CV
+ensemble = StackingClassifier(estimators=estimators, final_estimator=LogisticRegression(), cv=5)
+```
+
 ---
 
 ## When to Use This Skill
