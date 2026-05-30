@@ -153,6 +153,14 @@ ensemble = StackingClassifier(estimators=estimators, final_estimator=LogisticReg
 
 ---
 
+### 8. The "Single-Axis" Compute Constraint
+Execution time is strictly limited (e.g., 600 seconds). You cannot do everything at once. 
+When in "Architecture & Tuning Mode", you must choose ONLY ONE of the following strategies per iteration:
+1. **Strategy A (Ensembling):** Build a `StackingClassifier` or `VotingClassifier`, but use DEFAULT hyperparameters for the base models. DO NOT perform hyperparameter search inside an ensemble.
+2. **Strategy B (Tuning):** Use a SINGLE base model (e.g., LightGBM) and tune it using `RandomizedSearchCV` (strictly set `n_iter=5` or lower). DO NOT use exhaustive `GridSearchCV`.
+
+---
+
 ## When to Use This Skill
 
 Use the scikit-learn skill when:

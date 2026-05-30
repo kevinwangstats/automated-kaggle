@@ -38,6 +38,22 @@ Adding too many features can lead to overfitting. Actively prune uninformative f
 * **Numerical Imputation:** Use `SimpleImputer(strategy='median')` or `KNNImputer`.
 * **Robust Encoding:** `OneHotEncoder(handle_unknown='ignore', sparse_output=False)` or `OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1)` must be used for all categorical variables to gracefully handle unseen categories in the test set.
 
+## 5. High-Cardinality Categorical Safety
+Standard `OneHotEncoder` will bloat the dataset and cause timeouts or memory limits if applied to columns with many unique values (e.g., names, IDs, high-cardinality categories).
+* **Preferred Approach:** Use scikit-learn's `TargetEncoder` natively within the `ColumnTransformer` for high-cardinality features. 
+* **Implementation Example:** 
+```python
+from sklearn.preprocessing import TargetEncoder
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import Pipeline
+
+categorical_transformer = Pipeline([
+    ('imputer', SimpleImputer(strategy='constant', fill_value='missing')),
+    ('target_encode', TargetEncoder(target_type='continuous', smooth=10.0))
+])
+```
+Strict Rule: Never attempt to manually map string categories using Python dictionaries (.map({})) unless there are fewer than 5 explicit, known categories.
+
 ## Example: Advanced Feature Engineering Pipeline
 
 ```python

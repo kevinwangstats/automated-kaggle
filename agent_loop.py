@@ -224,21 +224,32 @@ def run_agent_loop(
     for i in range(start_iteration, end_iteration):
         # Determine Cognitive State
         last_run_failed = False
-        if history:
-            last_run = history[-1]
-            if last_run.get('error'):
-                error_str = str(last_run['error'])
-                # Only trigger strict Debug Mode for script execution failures, not LLM API timeouts
-                if "Script Execution Failed" in error_str or "Traceback" in error_str or "SyntaxError" in error_str:
-                    last_run_failed = True
+        last_error_was_timeout = False
+        
+        if history and history[-1].get('error'):
+            last_run_failed = True
+            error_msg = str(history[-1].get('error'))
+            if "Timed Out" in error_msg or "TimeoutExpired" in error_msg:
+                last_error_was_timeout = True
 
-        if last_run_failed:
-            state_name = "DEBUG MODE"
+        if last_error_was_timeout:
+            state_name = "DEBUG MODE (TIMEOUT)"
+            mission_text = """MISSION (DEBUG MODE - TIMEOUT):
+The previous execution exceeded the maximum time limit.
+Your EXCLUSIVE priority is to make the code execute faster to avoid timeouts. 
+- DO NOT add new features. 
+- IF using `RandomizedSearchCV`, drastically reduce `n_iter` or remove the search entirely.
+- IF using `StackingClassifier` or `VotingClassifier`, switch back to a single model (e.g., LightGBM).
+- Reduce `n_estimators`, decrease cross-validation folds, or remove complex feature selection steps.
+"""
+        elif last_run_failed:
+            state_name = "DEBUG MODE (SYNTAX)"
             mission_text = """MISSION (DEBUG MODE - CRITICAL):
-The previous execution crashed with the error shown in the memory above. 
-Your EXCLUSIVE priority is to debug and fix the script so it executes successfully.
+The previous execution crashed with a syntax or runtime error (see memory). 
+Your EXCLUSIVE priority is to debug and logically repair the script so it executes successfully.
 - DO NOT attempt to add new features, swap models, or optimize the score in this turn.
-- DO NOT take the "lazy fix" by simply deleting the lines of code that caused the error. You must logically repair the code."""
+- DO NOT take the "lazy fix" by simply deleting the lines of code that caused the error. Logically repair it.
+"""
         elif i <= feature_iterations:
             state_name = "FEATURE ENGINEERING MODE"
             mission_text = """MISSION (FEATURE ENGINEERING MODE):
