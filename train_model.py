@@ -96,6 +96,29 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     print(f"Final CV Score: {final_score:.4f}")
     
     os.makedirs(output_dir, exist_ok=True)
+    
+    # Extract Feature Importances from the last fold
+    try:
+        last_model = fold_pipeline.named_steps['model']
+        preprocessor = fold_pipeline.named_steps['preprocessor']
+        
+        # Scikit-learn 1.2+ supports get_feature_names_out()
+        feature_names = preprocessor.get_feature_names_out()
+        
+        if hasattr(last_model, 'feature_importances_'):
+            importances = last_model.feature_importances_
+            fi_df = pd.DataFrame({'feature': feature_names, 'importance': importances})
+            fi_df = fi_df.sort_values('importance', ascending=False)
+            
+            fi_dict = {
+                "top_15_features": fi_df.head(15).to_dict('records'),
+                "bottom_15_features": fi_df.tail(15).to_dict('records')
+            }
+            with open(os.path.join(output_dir, "feature_importances.json"), "w") as f:
+                json.dump(fi_dict, f, indent=2)
+    except Exception as e:
+        print(f"Warning: Could not extract feature importances: {e}")
+
     with open(os.path.join(output_dir, "metrics.json"), "w") as f:
         json.dump({"cv_score": final_score}, f)
 

@@ -265,7 +265,18 @@ RULES (your script MUST follow ALL of these):
 6. PREDICTIONS: For `raw_submission.csv`, always output continuous probabilities via `predict_proba(test_X)[:, 1]`. No thresholding — another script handles Kaggle formatting.
 """
 
-        prompt = f"{base_prompt}\n=== CURRENT SCRIPT ===\n```python\n{current_script}\n```\n\n{memory_string}\n\n{mission_text}\nFirst, provide a brief 1-2 sentence explanation of your strategy or fix. Then, output the full modified Python code wrapped in ```python ... ``` blocks."
+        # Load Feature Importance Feedback
+        fi_path = Path(workspace_mgr.get_file_path("feature_importances.json")) if workspace_mgr else Path("feature_importances.json")
+        fi_string = ""
+        if fi_path.exists():
+            try:
+                with open(fi_path, "r") as f:
+                    fi_data = json.load(f)
+                fi_string = f"\n=== FEATURE IMPORTANCE FEEDBACK (From Last Run) ===\nTop Features (Keep these):\n{json.dumps(fi_data.get('top_15_features', []), indent=2)}\n\nBottom/Zero-Importance Features (STRONGLY CONSIDER PRUNING THESE):\n{json.dumps(fi_data.get('bottom_15_features', []), indent=2)}\n"
+            except Exception:
+                pass
+
+        prompt = f"{base_prompt}\n=== CURRENT SCRIPT ===\n```python\n{current_script}\n```\n\n{memory_string}\n{fi_string}\n{mission_text}\nFirst, provide a brief 1-2 sentence explanation of your strategy or fix. Then, output the full modified Python code wrapped in ```python ... ``` blocks."
         
         if not skip_confirmation:
             log_info(f"Preparing to call LLM for iteration {i}.")
