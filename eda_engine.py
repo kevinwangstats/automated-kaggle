@@ -12,6 +12,7 @@ from logger import log_stage, log_error
 import os
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
+from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
 
 def perform_eda(dataset_path: str, target_col: str, output_path: str = "EDA.md", max_rows: int = None, workspace_mgr=None):
     log_stage("Enhanced Automated EDA")
@@ -69,6 +70,36 @@ def perform_eda(dataset_path: str, target_col: str, output_path: str = "EDA.md",
             top_neg = {str(k): float(v) for k, v in all_corrs.tail(5).round(4).items()}
             correlations = {"Top 5 Positive": top_pos, "Top 5 Negative": top_neg}
 
+        # 2.5 Categorical Feature Importance (Mutual Info)
+        cat_cols_for_mi = list(df.select_dtypes(include=['object', 'category']).columns)
+        if target_col in cat_cols_for_mi:
+            cat_cols_for_mi.remove(target_col)
+            
+        cat_mi = {}
+        if cat_cols_for_mi and target_col in df.columns:
+            clean_target = df[target_col].copy()
+            # If target is categorical/object, encode it and use classif
+            if clean_target.dtype == object or clean_target.dtype.name == 'category' or clean_target.dtype == bool:
+                mode_vals = clean_target.mode()
+                fill_val = mode_vals[0] if not mode_vals.empty else "Missing"
+                clean_target = LabelEncoder().fit_transform(clean_target.fillna(fill_val).astype(str))
+                mi_func = mutual_info_classif
+            else:
+                # Target is numeric, handle NAs and use regression
+                clean_target = pd.to_numeric(clean_target, errors='coerce').fillna(0)
+                mi_func = mutual_info_regression
+
+            X_cat = pd.DataFrame()
+            for col in cat_cols_for_mi:
+                X_cat[col] = LabelEncoder().fit_transform(df[col].fillna("Missing").astype(str))
+            
+            try:
+                mi_scores = mi_func(X_cat, clean_target, random_state=42)
+                mi_series = pd.Series(mi_scores, index=cat_cols_for_mi).sort_values(ascending=False)
+                cat_mi = {str(k): float(round(v, 4)) for k, v in mi_series.head(10).items()}
+            except Exception as e:
+                cat_mi = {"Error": str(e)}
+
         # 3. Data Signatures & Samples
         sample_df = df.sample(n=min(5, len(df)), random_state=42)
         
@@ -91,6 +122,9 @@ def perform_eda(dataset_path: str, target_col: str, output_path: str = "EDA.md",
             "",
             "## Feature-to-Target Correlation (Numerical)",
             f"```json\n{json.dumps(correlations, indent=2)}\n```",
+            "",
+            "## Categorical Feature Importance (Mutual Info)",
+            f"```json\n{json.dumps(cat_mi, indent=2)}\n```",
             "",
             "## Missing Values (>0%)",
             f"```json\n{json.dumps(missing_cols, indent=2)}\n```",
