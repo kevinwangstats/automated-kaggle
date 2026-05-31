@@ -161,6 +161,21 @@ When in "Architecture & Tuning Mode", you must choose ONLY ONE of the following 
 
 ---
 
+### 9. Known Anti-Patterns (Empirically Proven to Hurt)
+- **Do NOT apply PCA before tree-based models.** Trees are invariant to linear transformations — PCA just discards information without helping the trees.
+- **Do NOT use `SelectFromModel` with the same estimator class as the final classifier** (e.g., `LGBMClassifier` selector for a `LGBMClassifier`). They learn nearly the same features, adding no value while introducing noise.
+- **Do NOT build a `StackingClassifier` with a `LogisticRegression` meta-learner** when the base models already produce well-calibrated probabilities. The meta-learner's linear combination rarely beats a simple average/soft voting.
+- **Do NOT wrap feature selection in `FeatureUnion`**. Combining two selectors picks overlapping features, bloating the feature space instead of pruning it.
+
+### 10. Plateau Escape Strategies (When Score Stops Improving)
+If you are stuck and the score isn't improving, try these approaches in order:
+1. **Tune learning_rate + n_estimators with early stopping** — the single most reliable knob for GBDT models.
+2. **Try CatBoost** — often outperforms LightGBM on categorical-heavy datasets with minimal tuning.
+3. **Soft VotingClassifier** with LGBM + CatBoost + XGBoost using default params — model diversity beats tuning a single model.
+4. **Adjust regularization** (`reg_alpha`, `reg_lambda`, `min_child_samples`) — specifically target overfitting if the training score is much higher than CV.
+
+---
+
 ## When to Use This Skill
 
 Use the scikit-learn skill when:

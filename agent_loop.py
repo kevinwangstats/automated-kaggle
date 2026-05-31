@@ -129,20 +129,34 @@ def _init_weave(wandb_enabled: bool, wandb_project: str, wandb_entity: str):
             weave_project = f"{wandb_entity}/{weave_project}"
         weave.init(weave_project)
 
-def _build_agent_memory(history: list) -> str:
+def _build_agent_memory(history: list, current_best_score: float = None) -> str:
     worked = []
     failed = []
     crashed = []
+    
+    higher_is_better = True
     
     for run in history:
         reasoning = str(run.get('agent_reasoning', '')).replace('\n', ' ').strip()
         if not reasoning or reasoning == "No reasoning provided by LLM." or reasoning == "Execution failed before logic extraction":
             continue
             
+        score_str = f"Score: {run['score']}"
+        if run.get('score') is not None and current_best_score is not None:
+            delta = run['score'] - current_best_score
+            if not higher_is_better:
+                delta = -delta
+            if delta < 0 and delta >= -0.01:
+                score_str += f", Δ={delta:.4f} NEAR MISS"
+            elif delta < -0.01:
+                score_str += f", Δ={delta:.4f} CATASTROPHIC"
+            elif delta > 0:
+                score_str += f", Δ=+{delta:.4f}"
+            
         if run.get('improved'):
-            worked.append(f"- Iter {run['iteration']} (Score: {run['score']}): {reasoning}")
+            worked.append(f"- Iter {run['iteration']} ({score_str}): {reasoning}")
         elif run.get('score') is not None and not run.get('improved'):
-            failed.append(f"- Iter {run['iteration']} (Score: {run['score']}): {reasoning}")
+            failed.append(f"- Iter {run['iteration']} ({score_str}): {reasoning}")
         elif run.get('error'):
             crashed.append(f"- Iter {run['iteration']} (CRASH): {reasoning}")
 
@@ -262,9 +276,14 @@ The script is stable. Your goal is to maximize the CV score by improving the dat
         else:
             state_name = "ARCHITECTURE & TUNING MODE"
             mission_text = """MISSION (ARCHITECTURE & TUNING MODE):
-The feature engineering phase is complete and locked.
+The feature engineering phase is complete. The preprocessing steps are LOCKED.
 - STRICT RULE: Do NOT add, remove, or modify the feature engineering or data preprocessing steps.
-- FOCUS: Aggressively experiment with the feature space. You MUST propose a new feature representation, but you are also highly encouraged to PRUNE or drop unimportant/noisy features (using pandas `.drop()` or scikit-learn feature selection like `SelectKBest`) to prevent overfitting."""
+- FOCUS: Improve the score through one of these strategies (pick ONE per iteration):
+  A) Tune the model's hyperparameters using RandomizedSearchCV (n_iter <= 5).
+  B) Swap to a different model architecture (e.g., CatBoost, XGBoost) or build an ensemble.
+  C) Adjust the cross-validation strategy (e.g., StratifiedKFold, more folds).
+- WARNING: Do NOT apply PCA or SelectFromModel before tree-based models — trees handle feature importance internally and external pruning almost always hurts.
+- WARNING: Avoid adding feature selection steps (SelectKBest, SelectPercentile, etc.) unless you have strong evidence from EDA or feature importance feedback that specific features are pure noise."""
 
         log_stage(f"Iteration {i} [{state_name}]")
         log_info(f"Active Mode for Iteration {i}: {state_name}")
@@ -277,7 +296,7 @@ The feature engineering phase is complete and locked.
         
         script_path = "train_model.py"
         current_script = read_file(script_path)
-        memory_string = _build_agent_memory(history)
+        memory_string = _build_agent_memory(history, current_best_score)
 
         models_str = ", ".join(available_models) if available_models else "None specifically defined in registry"
         
@@ -290,6 +309,7 @@ RULES (your script MUST follow ALL of these):
 4. MEMORY SAFETY: Preserve any `nrows=...` argument in `pd.read_csv` to prevent OOM crashes.
 5. ID COLUMN: Capture the test set's first column (ID) before dropping it from features. Failure causes column shifting in submissions.
 6. PREDICTIONS: For `raw_submission.csv`, always output continuous probabilities via `predict_proba(test_X)[:, 1]`. No thresholding — another script handles Kaggle formatting.
+7. CROSS-VALIDATION: For classification tasks, use `StratifiedKFold` instead of `KFold` to preserve class distribution across folds. For regression, use `KFold`.
 """
 
         # Load Feature Importance Feedback
