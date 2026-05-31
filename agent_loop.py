@@ -305,7 +305,7 @@ The feature engineering phase is complete. The preprocessing steps are LOCKED.
 RULES (your script MUST follow ALL of these):
 1. DATASET-AGNOSTIC: Read `dataset_path`, `target_col`, `test_path` from config. Never hardcode column names or file paths.
 2. CLI INTERFACE: Accept `--config` (default `config.yaml`) and `--output_dir` (default `.`) via `argparse`.
-3. OUTPUT: Save `metrics.json` (format: `{{"cv_score": final_score}}`) and `raw_submission.csv` inside `output_dir` using `pathlib.Path(output_dir) / ...`.
+3. OUTPUT: Save `metrics.json` (format: `{"cv_score": final_score}`), `feature_importances.json` (format: `{"top_15_features": [...], "bottom_15_features": [...]}`), and `raw_submission.csv` inside `output_dir` using `pathlib.Path(output_dir) / ...`.
 4. MEMORY SAFETY: Preserve any `nrows=...` argument in `pd.read_csv` to prevent OOM crashes.
 5. ID COLUMN: Capture the test set's first column (ID) before dropping it from features. Failure causes column shifting in submissions.
 6. PREDICTIONS: For `raw_submission.csv`, always output continuous probabilities via `predict_proba(test_X)[:, 1]`. No thresholding — another script handles Kaggle formatting.

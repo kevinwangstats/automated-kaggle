@@ -155,6 +155,28 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     with open(output_path / "metrics.json", "w") as f:
         json.dump({{"cv_score": final_score}}, f)
 
+    # 5.5 Extract Feature Importances (from the last fold)
+    try:
+        classifier = fold_pipeline.named_steps.get('classifier', fold_pipeline.steps[-1][1])
+        if hasattr(classifier, 'feature_importances_'):
+            importances = classifier.feature_importances_
+            preprocessor = fold_pipeline.named_steps.get('preprocessor')
+            if preprocessor and hasattr(preprocessor, 'get_feature_names_out'):
+                feature_names = preprocessor.get_feature_names_out()
+            else:
+                feature_names = [f"f{{i}}" for i in range(len(importances))]
+            
+            fi_df = pd.DataFrame({{'feature': feature_names, 'importance': importances}})
+            fi_df = fi_df.sort_values('importance', ascending=False)
+            fi_data = {{
+                'top_15_features': fi_df.head(15)['feature'].tolist(),
+                'bottom_15_features': fi_df.tail(15)['feature'].tolist()
+            }}
+            with open(output_path / "feature_importances.json", "w") as f:
+                json.dump(fi_data, f)
+    except Exception as e:
+        print(f"Could not extract feature importances: {{e}}")
+
     # 6. Generate Submission (if test_path is provided)
     if test_path and Path(test_path).exists():
         print("Generating submission...")

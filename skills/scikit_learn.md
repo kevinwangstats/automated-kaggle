@@ -133,22 +133,25 @@ As detailed in `llms.txt` and `train_model.py`:
 * **ID Column Preservation**: When generating submissions, you MUST capture the original ID column (typically the first column of the test set) before dropping it from the feature set.
 * **Pipeline Integrity**: The modeling pipeline heavily relies on scikit-learn `Pipeline` and `ColumnTransformer` architectures to prevent data leakage and handle unseen categories safely (`handle_unknown='ignore'`).
 
-### 7. Safe Ensembling (Preventing Data Leakage)
-When building a `StackingClassifier`, `StackingRegressor`, `VotingClassifier`, or `VotingRegressor`, DO NOT manually call `.fit()` on the base estimators. The scikit-learn meta-estimator handles cross-validated fitting natively.
-* **INCORRECT:** `xgb.fit(X_train, y_train)` then passing `xgb` into the ensemble.
-* **CORRECT:**
+### 7. Safe Ensembling & Blending (Preventing Data Leakage)
+When building ensembles like `StackingClassifier` or `VotingClassifier`, DO NOT manually call `.fit()` on the base estimators. The scikit-learn meta-estimator handles fitting natively.
+
+**Soft Voting Blending (Highly Recommended):**
+A simple soft voting ensemble of diverse GBDT models is often the safest and most effective way to improve CV without overfitting.
 ```python
-from sklearn.ensemble import StackingClassifier
+from sklearn.ensemble import VotingClassifier
 from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
-from sklearn.linear_model import LogisticRegression
+from catboost import CatBoostClassifier
 
 estimators = [
-    ('xgb', XGBClassifier(random_state=42, n_jobs=-1)),
-    ('lgb', LGBMClassifier(random_state=42, verbosity=-1, n_jobs=-1))
+    ('xgb', XGBClassifier(random_state=42, n_jobs=-1, verbose=False)),
+    ('lgb', LGBMClassifier(random_state=42, verbosity=-1, n_jobs=-1)),
+    ('cat', CatBoostClassifier(random_state=42, verbose=0, thread_count=-1))
 ]
-# The StackingClassifier natively handles fitting the base models using internal CV
-ensemble = StackingClassifier(estimators=estimators, final_estimator=LogisticRegression(), cv=5)
+# Soft voting averages the predicted probabilities
+ensemble = VotingClassifier(estimators=estimators, voting='soft')
+# Then place 'ensemble' inside your Pipeline as the classifier
 ```
 
 ---
