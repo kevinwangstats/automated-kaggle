@@ -188,7 +188,10 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
 
         if task == 'classification':
             if hasattr(pipeline, "predict_proba"):
-                preds = pipeline.predict_proba(test_X)[:, 1]
+                if len(le_y.classes_) > 2:
+                    preds = pipeline.predict_proba(test_X)
+                else:
+                    preds = pipeline.predict_proba(test_X)[:, 1]
             elif hasattr(pipeline, "decision_function"):
                 preds = pipeline.decision_function(test_X)
             else:
@@ -199,7 +202,13 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
         submission = pd.DataFrame()
         if len(test_df.columns) > 0:
              submission[test_df.columns[0]] = test_df.iloc[:, 0]
-        submission[target_col] = preds
+             
+        if task == 'classification' and len(le_y.classes_) > 2 and hasattr(pipeline, "predict_proba"):
+            for i in range(preds.shape[1]):
+                submission[f"class_{i}"] = preds[:, i]
+        else:
+            submission[target_col] = preds
+            
         submission.to_csv(output_path / "raw_submission.csv", index=False)
         print("Saved raw_submission.csv")
 

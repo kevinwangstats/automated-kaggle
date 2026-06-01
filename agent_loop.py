@@ -308,7 +308,7 @@ RULES (your script MUST follow ALL of these):
 3. OUTPUT: Save `metrics.json` (format: `{{"cv_score": final_score}}`), `feature_importances.json` (format: `{{"top_15_features": [...], "bottom_15_features": [...]}}`), and `raw_submission.csv` inside `output_dir` using `pathlib.Path(output_dir) / ...`.
 4. MEMORY SAFETY: Preserve any `nrows=...` argument in `pd.read_csv` to prevent OOM crashes.
 5. ID COLUMN: Capture the test set's first column (ID) before dropping it from features. Failure causes column shifting in submissions.
-6. PREDICTIONS: For `raw_submission.csv`, always output continuous probabilities via `predict_proba(test_X)[:, 1]`. No thresholding — another script handles Kaggle formatting.
+6. PREDICTIONS: For `raw_submission.csv`, always output probabilities. For binary, use `predict_proba(test_X)[:, 1]`. For multiclass, output all classes as separate columns `class_0, class_1, ...`. No thresholding — another script handles Kaggle formatting.
 7. CROSS-VALIDATION: For classification tasks, use `StratifiedKFold` instead of `KFold` to preserve class distribution across folds. For regression, use `KFold`.
 """
 

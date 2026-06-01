@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 from logger import log_info
 from utils import load_config
+from sklearn.preprocessing import LabelEncoder
 
 def setup_workspace(dataset_name: str):
     """
@@ -149,7 +150,42 @@ def format_submission(config_path="config.yaml", workspace_mgr=None):
             
             target_col = target_col_name
 
-    if len(final_sub.columns) > 1:
+    if pred_type == "multiclass_class":
+        log_info("Converting probabilities to discrete string classes via argmax.")
+        dataset_path = config.get("dataset_path")
+        target_col_name = config.get("target_col")
+        
+        train_df = pd.read_csv(dataset_path, usecols=[target_col_name])
+        train_df = train_df.dropna(subset=[target_col_name])
+        
+        le = LabelEncoder()
+        le.fit(train_df[target_col_name])
+        
+        prob_cols = final_sub.columns[1:]
+        max_idx = final_sub[prob_cols].values.argmax(axis=1)
+        predicted_labels = le.inverse_transform(max_idx)
+        
+        new_sub = pd.DataFrame()
+        new_sub[final_sub.columns[0]] = final_sub.iloc[:, 0]
+        
+        # Determine the correct target column name for submission
+        if example_sub_path and Path(example_sub_path).exists():
+            final_target_name = example_sub.columns[1] if len(example_sub.columns) > 1 else target_col_name
+        else:
+            final_target_name = target_col_name
+            
+        new_sub[final_target_name] = predicted_labels
+        final_sub = new_sub
+        
+    elif pred_type == "multiclass_prob":
+        log_info("Mapping probability columns to match example_submission.")
+        if example_sub_path and Path(example_sub_path).exists():
+            if len(example_sub.columns) == len(final_sub.columns):
+                col_map = {final_sub.columns[i]: example_sub.columns[i] for i in range(len(final_sub.columns))}
+                final_sub = final_sub.rename(columns=col_map)
+            else:
+                log_info("Warning: Column count mismatch between raw_submission and example_submission.")
+    elif len(final_sub.columns) > 1:
         target_col = final_sub.columns[1]
         if pred_type == "0/1":
             log_info("Converting probabilities to discrete 0/1 classes (threshold=0.5).")

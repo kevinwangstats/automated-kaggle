@@ -81,7 +81,9 @@ timeout: 600
 # "prob": Submit raw probabilities (e.g., 0.73). Use for competitions scored on log_loss or AUC.
 # "0/1": Convert probabilities to discrete 0 or 1 classes using a 0.5 threshold.
 # "true/false": Convert probabilities to True or False boolean labels using a 0.5 threshold.
-# Examples: "prob", "0/1", "true/false"
+# "multiclass_prob": Map the N probability columns to the N target columns found in the example_submission.csv.
+# "multiclass_class": Takes the argmax over probability columns and maps back to original string classes using the training data.
+# Examples: "prob", "0/1", "true/false", "multiclass_prob", "multiclass_class"
 pred_type: "prob"
 
 # example_submission: Path to a Kaggle-provided sample submission file.
