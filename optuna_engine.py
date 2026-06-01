@@ -111,9 +111,13 @@ def run_optuna_optimization(workspace_mgr, trials=50, metric=None):
     except Exception as e:
         log_info(f"Optimization interrupted or failed: {e}")
         
-    best_score = study.best_value
-    best_params = study.best_params
-    
+    try:
+        best_score = study.best_value
+        best_params = study.best_params
+    except ValueError:
+        log_info("No trials completed successfully in Optuna tuning. Keeping original model.")
+        return None, None
+        
     log_info(f"Optimization completed. Best {scoring}: {best_score:.4f}")
     
     with open(out_params_path, "w") as f:
