@@ -205,7 +205,7 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
              
         if task == 'classification' and len(le_y.classes_) > 2 and hasattr(pipeline, "predict_proba"):
             for i in range(preds.shape[1]):
-                submission[f"class_{i}"] = preds[:, i]
+                submission[f"class_{{i}}"] = preds[:, i]
         else:
             submission[target_col] = preds
             
