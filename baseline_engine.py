@@ -130,7 +130,7 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
             with open(output_path / "optuna_model.txt", "w") as f:
                 f.write(type(pipeline.named_steps['classifier']).__name__)
     except Exception as e:
-        print(f"Warning: Could not save Optuna handoff artifacts: {e}")
+        print(f"Warning: Could not save Optuna handoff artifacts: {{e}}")
     
     # 5. Cross Validation
     cv = KFold(n_splits=5, shuffle=True, random_state=42)
