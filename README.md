@@ -2,7 +2,7 @@
 
 This repository serves as a ready-to-use template for automated, agentic modeling on **tabular** Kaggle data challenges. It implements an LLM-driven pipeline that iteratively improves machine learning performance by concurrently optimizing and ensembling a suite of powerful frameworks (e.g., **XGBoost**, **LightGBM**, **CatBoost**, **Ridge Regression**), while also supporting evaluation of **H2O AutoML** baselines.
 
-The pipeline establishes a baseline ensemble out of the box, and then uses LLM-driven reasoning to tune hyperparameters, perform feature engineering, and refine the ensemble architecture to maximize cross-validation scores.
+The pipeline establishes a baseline ensemble out of the box, and then uses LLM-driven reasoning to perform feature engineering and refine the ensemble architecture. Hyperparameter tuning is decoupled and handled mathematically by a dedicated **Optuna Bayesian Hyperparameter Optimization** engine to maximize cross-validation scores.
 
 If you are looking for technical details on how the pipeline is built, its architecture, or how to contribute, please see [DEVELOPERS.md](DEVELOPERS.md).
 

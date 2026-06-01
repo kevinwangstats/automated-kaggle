@@ -18,6 +18,7 @@ import kaggle_ops
 from eda_engine import perform_eda
 from baseline_engine import evaluate_baselines
 from agent_loop import run_agent_loop, run_training_script
+from optuna_engine import run_optuna_optimization
 from git_manager import GitManager, dataset_branch_from_dataset_path
 from workspace_manager import WorkspaceManager
 from logger import log_stage, log_error, log_info, enable_file_logging
@@ -353,7 +354,14 @@ def main():
             except Exception as e:
                 log_error("Failed to generate baseline submission", e)
 
-        # Phase 4: Format Final Submission
+        # Phase 4: Optuna Hyperparameter Optimization
+        if config.get("use_optuna", False):
+            t_optuna = time.time()
+            optuna_trials = config.get("optuna_trials", 50)
+            run_optuna_optimization(workspace_mgr, trials=optuna_trials, metric=metric)
+            log_info(f"Phase 4 (Optuna Tuning) completed in {time.time() - t_optuna:.2f}s")
+            
+        # Phase 5: Format Final Submission
 
         log_stage("Formatting Final Submission")
         t_format = time.time()

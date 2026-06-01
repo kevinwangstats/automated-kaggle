@@ -59,6 +59,10 @@ tuning_iterations: 2
 
 # --- PIPELINE TUNING & METRICS ---
 
+# Optuna Hyperparameter Optimization
+use_optuna: true
+optuna_trials: 10
+
 # metric: The scikit-learn scoring metric name for Cross Validation.
 # If null (~), it defaults to 'roc_auc' for classification and 'neg_mean_squared_error' for regression.
 # Examples: "f1", "accuracy", "roc_auc", "neg_log_loss", "r2", "neg_mean_squared_error", ~

@@ -51,6 +51,10 @@ tuning_iterations: 5
 
 # --- PIPELINE TUNING & METRICS ---
 
+# Optuna Hyperparameter Optimization
+use_optuna: true
+optuna_trials: 50
+
 # exploration_margin: The allowed score degradation (in absolute points) before it is considered a severe failure.
 # For example, 0.05 allows a 5% point drop before punishing the agent.
 exploration_margin: 0.05

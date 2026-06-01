@@ -52,6 +52,7 @@ import json
 import os
 import re
 import argparse
+import joblib
 import warnings
 from sklearn.model_selection import KFold, cross_val_score
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler
@@ -117,6 +118,19 @@ def train_and_evaluate(config_path="config.yaml", output_dir="."):
     # 4. Create Full Pipeline
     pipeline = Pipeline(steps=[('preprocessor', preprocessor),
                                ('classifier', model)])
+                               
+    # 4.5 Extract preprocessed data for Optuna handoff
+    try:
+        import joblib
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+        if 'preprocessor' in pipeline.named_steps:
+            X_prep = pipeline.named_steps['preprocessor'].fit_transform(X)
+            joblib.dump((X_prep, y), output_path / "optuna_data.pkl")
+            with open(output_path / "optuna_model.txt", "w") as f:
+                f.write(type(pipeline.named_steps['classifier']).__name__)
+    except Exception as e:
+        print(f"Warning: Could not save Optuna handoff artifacts: {e}")
     
     # 5. Cross Validation
     cv = KFold(n_splits=5, shuffle=True, random_state=42)

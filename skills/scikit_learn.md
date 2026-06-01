@@ -156,11 +156,16 @@ ensemble = VotingClassifier(estimators=estimators, voting='soft')
 
 ---
 
-### 8. The "Single-Axis" Compute Constraint
+### 8. The "Single-Axis" Compute Constraint (Optuna Handoff)
 Execution time is strictly limited (e.g., 600 seconds). You cannot do everything at once. 
-When in "Architecture & Tuning Mode", you must choose ONLY ONE of the following strategies per iteration:
-1. **Strategy A (Ensembling):** Build a `StackingClassifier` or `VotingClassifier`, but use DEFAULT hyperparameters for the base models. DO NOT perform hyperparameter search inside an ensemble.
-2. **Strategy B (Tuning):** Use a SINGLE base model (e.g., LightGBM) and tune it using `RandomizedSearchCV` (strictly set `n_iter=5` or lower). DO NOT use exhaustive `GridSearchCV`.
+
+**BAN ON SEARCH CV:** You are STRICTLY FORBIDDEN from using `GridSearchCV`, `RandomizedSearchCV`, or `HalvingGridSearchCV`. These cause timeouts. You must focus entirely on Feature Engineering, Preprocessing, and Ensembling.
+
+**DEFAULT PARAMETERS ONLY:** Always initialize your base estimators (XGBoost, LightGBM, CatBoost) with DEFAULT hyperparameters (except for `random_state` and `n_jobs`/`thread_count`). The pipeline has a dedicated Optuna engine that will automatically tune the hyperparameters mathematically after your script runs. Do not waste execution time attempting to tune hyperparameters manually.
+
+When in "Architecture & Tuning Mode", your focus should be:
+1. **Strategy A (Ensembling):** Build a `StackingClassifier` or `VotingClassifier` using default hyperparameters for the base models. 
+2. **Strategy B (Architecture Changes):** Change the model type (e.g., switch from LGBM to CatBoost) or modify the preprocessing pipeline.
 
 ---
 
