@@ -278,12 +278,11 @@ The script is stable. Your goal is to maximize the CV score by improving the dat
             mission_text = """MISSION (ARCHITECTURE & TUNING MODE):
 The feature engineering phase is complete. The preprocessing steps are LOCKED.
 - STRICT RULE: Do NOT add, remove, or modify the feature engineering or data preprocessing steps.
-- FOCUS: Improve the score through one of these strategies (pick ONE per iteration):
-  A) Tune the model's hyperparameters using RandomizedSearchCV (n_iter <= 5).
-  B) Swap to a different model architecture (e.g., CatBoost, XGBoost) or build an ensemble.
-  C) Adjust the cross-validation strategy (e.g., StratifiedKFold, more folds).
-- WARNING: Do NOT apply PCA or SelectFromModel before tree-based models — trees handle feature importance internally and external pruning almost always hurts.
-- WARNING: Avoid adding feature selection steps (SelectKBest, SelectPercentile, etc.) unless you have strong evidence from EDA or feature importance feedback that specific features are pure noise."""
+- FOCUS: Improve the score through one of these strategies:
+  A) Swap to a different model architecture (e.g., CatBoost, XGBoost) using DEFAULT hyperparameters.
+  B) Build a complex ensemble (e.g., StackingClassifier, VotingClassifier) using DEFAULT hyperparameters.
+- OPTUNA DELEGATION: You are STRICTLY FORBIDDEN from using `RandomizedSearchCV` or `GridSearchCV`. Hyperparameter tuning is handled externally by Phase 4 (Optuna). Only use default parameters (except for `random_state` and `n_jobs`).
+- WARNING: Do NOT apply PCA or SelectFromModel before tree-based models."""
 
         log_stage(f"Iteration {i} [{state_name}]")
         log_info(f"Active Mode for Iteration {i}: {state_name}")
